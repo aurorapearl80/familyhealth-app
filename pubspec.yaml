@@ -1,0 +1,26 @@
+name: familyhealth
+description: Family Watch Today - Your health, decoded with precision.
+publish_to: 'none'
+version: 1.0.0+1
+
+environment:
+  sdk: '>=3.0.0 <4.0.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+  cupertino_icons: ^1.0.8
+  google_fonts: ^6.2.1
+  http: ^1.2.0
+  google_maps_flutter: ^2.6.0
+  flutter_blue_plus: ^1.35.5
+  permission_handler: ^11.4.0
+  provider: ^6.1.2
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^4.0.0
+
+flutter:
+  uses-material-design: true
