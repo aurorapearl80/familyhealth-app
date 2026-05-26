@@ -1,9 +1,17 @@
+import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:provider/provider.dart';
+
+import '../../services/ble_constants.dart';
 import '../../services/ble_scan_service.dart';
+import '../../services/ble_summary_service.dart';
+import '../../services/health_database.dart';
+import '../../services/weight_api_service.dart';
 import '../../theme/app_colors.dart';
 import '../../widgets/vitals_app_bar.dart';
+
+enum _UploadState { idle, sending, success, savedOffline, error }
 
 class BodyCompositionScreen extends StatefulWidget {
   const BodyCompositionScreen({super.key});
@@ -15,6 +23,89 @@ class BodyCompositionScreen extends StatefulWidget {
 class _BodyCompositionScreenState extends State<BodyCompositionScreen> {
   int _selectedRange = 0; // 0=W, 1=M, 2=6M
 
+  _UploadState _uploadState = _UploadState.idle;
+  DateTime? _lastProcessedAt;
+  late final BleScanService _ble;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _ble = context.read<BleScanService>();
+      _ble.addListener(_onBleChanged);
+    });
+  }
+
+  @override
+  void dispose() {
+    _ble.removeListener(_onBleChanged);
+    super.dispose();
+  }
+
+  // ── BLE listener ──────────────────────────────────────────────────────────
+
+  void _onBleChanged() {
+    final r = _ble.readings;
+    if (r.lastReadingKind != BleReadingKind.weight) return;
+    if (r.weight == null) return;
+    if (r.lastUpdated == null) return;
+    if (r.lastUpdated == _lastProcessedAt) return;
+
+    _lastProcessedAt = r.lastUpdated;
+    _handleNewReading(r.weight!, r.lastUpdated!);
+  }
+
+  // ── Upload flow ───────────────────────────────────────────────────────────
+
+  Future<void> _handleNewReading(double weight, DateTime measuredAt) async {
+    if (!mounted) return;
+    setState(() => _uploadState = _UploadState.sending);
+
+    final measuredAtStr = _formatMeasuredAt(measuredAt);
+    const deviceId = BleConstants.deviceWeight;
+    const timezone = 'Asia/Manila';
+
+    final connectivity = await Connectivity().checkConnectivity();
+    final hasInternet =
+        connectivity.any((r) => r != ConnectivityResult.none);
+
+    if (hasInternet) {
+      final success = await WeightApiService.sendReading(
+        weight: weight,
+        measuredAt: measuredAtStr,
+        deviceId: deviceId,
+        timezone: timezone,
+      );
+      if (!mounted) return;
+      setState(() =>
+          _uploadState = success ? _UploadState.success : _UploadState.error);
+    } else {
+      await HealthDatabase.insertWeightReading(
+        weight: weight,
+        measuredAt: measuredAtStr,
+        deviceId: deviceId,
+        timezone: timezone,
+      );
+      if (!mounted) return;
+      setState(() => _uploadState = _UploadState.savedOffline);
+    }
+
+    await Future.delayed(const Duration(seconds: 4));
+    if (mounted) setState(() => _uploadState = _UploadState.idle);
+  }
+
+  // ── Formatters ────────────────────────────────────────────────────────────
+
+  static String _formatMeasuredAt(DateTime dt) {
+    final y = dt.year.toString().padLeft(4, '0');
+    final mo = dt.month.toString().padLeft(2, '0');
+    final d = dt.day.toString().padLeft(2, '0');
+    final h = dt.hour.toString().padLeft(2, '0');
+    final mi = dt.minute.toString().padLeft(2, '0');
+    final s = dt.second.toString().padLeft(2, '0');
+    return '$y-$mo-$d $h:$mi:$s';
+  }
+
   static String _formatTime(DateTime dt) {
     final hour = dt.hour % 12 == 0 ? 12 : dt.hour % 12;
     final min = dt.minute.toString().padLeft(2, '0');
@@ -22,17 +113,25 @@ class _BodyCompositionScreenState extends State<BodyCompositionScreen> {
     return '$hour:$min $period';
   }
 
+  // ── Build ─────────────────────────────────────────────────────────────────
+
   @override
   Widget build(BuildContext context) {
+    final summary = context.watch<BleSummaryService>();
     return Scaffold(
       backgroundColor: AppColors.lightBg,
       body: SafeArea(
         child: Consumer<BleScanService>(
           builder: (context, ble, _) {
-            final weight = ble.readings.weight;
-            final weightDisplay = ble.readings.weightDisplay;
-            final lastUpdated = ble.readings.lastUpdated;
-            final timeStr = lastUpdated != null ? _formatTime(lastUpdated) : null;
+            // Use live BLE value; fall back to latest from server
+            final weight = ble.readings.weight ?? summary.weight;
+            final weightDisplay = weight != null
+                ? weight.toStringAsFixed(1)
+                : '--';
+            final lastUpdated =
+                ble.readings.lastUpdated ?? summary.weightDate;
+            final timeStr =
+                lastUpdated != null ? _formatTime(lastUpdated) : null;
             final isConnected = ble.registeredDevices
                 .any((d) => d.type.name == 'weight' && d.connected);
 
@@ -59,6 +158,8 @@ class _BodyCompositionScreenState extends State<BodyCompositionScreen> {
             return Column(
               children: [
                 const VitalsAppBar(title: 'Vitals'),
+                // ── Upload banner ────────────────────────────────────────
+                _buildUploadBanner(),
                 Expanded(
                   child: SingleChildScrollView(
                     child: Column(
@@ -76,7 +177,8 @@ class _BodyCompositionScreenState extends State<BodyCompositionScreen> {
                           outcomeDisplay: outcomeDisplay,
                         ),
                         Padding(
-                          padding: const EdgeInsets.symmetric(horizontal: 16),
+                          padding:
+                              const EdgeInsets.symmetric(horizontal: 16),
                           child: Column(
                             children: [
                               const SizedBox(height: 16),
@@ -98,6 +200,111 @@ class _BodyCompositionScreenState extends State<BodyCompositionScreen> {
       ),
     );
   }
+
+  // ── Upload banner ─────────────────────────────────────────────────────────
+
+  Widget _buildUploadBanner() {
+    if (_uploadState == _UploadState.idle) return const SizedBox.shrink();
+
+    final cfg = _bannerConfig(_uploadState);
+    return AnimatedContainer(
+      duration: const Duration(milliseconds: 300),
+      margin: const EdgeInsets.fromLTRB(16, 4, 16, 0),
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+      decoration: BoxDecoration(
+        color: cfg.bgColor,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: cfg.borderColor),
+      ),
+      child: Row(
+        children: [
+          if (_uploadState == _UploadState.sending)
+            SizedBox(
+              width: 18,
+              height: 18,
+              child: CircularProgressIndicator(
+                  strokeWidth: 2, color: cfg.iconColor),
+            )
+          else
+            Icon(cfg.icon, size: 18, color: cfg.iconColor),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(cfg.title,
+                    style: GoogleFonts.inter(
+                        fontSize: 13,
+                        fontWeight: FontWeight.w700,
+                        color: cfg.titleColor)),
+                Text(cfg.subtitle,
+                    style: GoogleFonts.inter(
+                        fontSize: 11,
+                        color: cfg.titleColor.withValues(alpha: 0.75))),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  _BannerConfig _bannerConfig(_UploadState state) {
+    switch (state) {
+      case _UploadState.sending:
+        return _BannerConfig(
+          bgColor: const Color(0xFFE3F2FD),
+          borderColor: const Color(0xFF90CAF9),
+          iconColor: const Color(0xFF1976D2),
+          titleColor: const Color(0xFF1565C0),
+          icon: Icons.cloud_upload_outlined,
+          title: 'Sending to server…',
+          subtitle: 'Uploading weight reading',
+        );
+      case _UploadState.success:
+        return _BannerConfig(
+          bgColor: const Color(0xFFE8F5E9),
+          borderColor: const Color(0xFFA5D6A7),
+          iconColor: const Color(0xFF388E3C),
+          titleColor: const Color(0xFF2E7D32),
+          icon: Icons.cloud_done_outlined,
+          title: 'Data sent successfully',
+          subtitle: 'Weight reading saved to server',
+        );
+      case _UploadState.savedOffline:
+        return _BannerConfig(
+          bgColor: const Color(0xFFFFF8E1),
+          borderColor: const Color(0xFFFFCC80),
+          iconColor: const Color(0xFFF57C00),
+          titleColor: const Color(0xFFE65100),
+          icon: Icons.wifi_off_rounded,
+          title: 'Saved offline',
+          subtitle: 'No connection — stored locally for later sync',
+        );
+      case _UploadState.error:
+        return _BannerConfig(
+          bgColor: const Color(0xFFFFECEC),
+          borderColor: const Color(0xFFFFCDD2),
+          iconColor: AppColors.danger,
+          titleColor: AppColors.danger,
+          icon: Icons.error_outline_rounded,
+          title: 'Upload failed',
+          subtitle: 'Reading saved locally — will retry when online',
+        );
+      case _UploadState.idle:
+        return _BannerConfig(
+          bgColor: Colors.transparent,
+          borderColor: Colors.transparent,
+          iconColor: Colors.transparent,
+          titleColor: Colors.transparent,
+          icon: Icons.circle,
+          title: '',
+          subtitle: '',
+        );
+    }
+  }
+
+  // ── Hero card ─────────────────────────────────────────────────────────────
 
   Widget _buildHeroCard({
     required String weightDisplay,
@@ -196,7 +403,8 @@ class _BodyCompositionScreenState extends State<BodyCompositionScreen> {
           ),
           const SizedBox(height: 16),
           Container(
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+            padding:
+                const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
             decoration: BoxDecoration(
               color: Colors.white24,
               borderRadius: BorderRadius.circular(12),
@@ -205,7 +413,8 @@ class _BodyCompositionScreenState extends State<BodyCompositionScreen> {
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
                 _buildBmiStat(bmiDisplay, bmiLabel),
-                const Icon(Icons.crop_square_outlined, color: Colors.white70, size: 18),
+                const Icon(Icons.crop_square_outlined,
+                    color: Colors.white70, size: 18),
                 _buildBmiStat(outcomeDisplay, 'OUTCOME'),
               ],
             ),
@@ -258,6 +467,8 @@ class _BodyCompositionScreenState extends State<BodyCompositionScreen> {
     );
   }
 
+  // ── Weight progress chart ─────────────────────────────────────────────────
+
   Widget _buildWeightProgress(double? latestWeight) {
     return Container(
       padding: const EdgeInsets.all(16),
@@ -288,7 +499,8 @@ class _BodyCompositionScreenState extends State<BodyCompositionScreen> {
                   children: ['W', 'M', '6M'].asMap().entries.map((e) {
                     final isSelected = e.key == _selectedRange;
                     return GestureDetector(
-                      onTap: () => setState(() => _selectedRange = e.key),
+                      onTap: () =>
+                          setState(() => _selectedRange = e.key),
                       child: Container(
                         padding: const EdgeInsets.symmetric(
                             horizontal: 12, vertical: 6),
@@ -338,9 +550,8 @@ class _BodyCompositionScreenState extends State<BodyCompositionScreen> {
 
   Widget _buildBarChart(double? latestWeight) {
     final values = [0.6, 0.7, 0.65, 0.8, 0.75, 0.85, 0.9];
-    final todayIndex = DateTime.now().weekday - 1; // 0=Mon, 6=Sun
+    final todayIndex = DateTime.now().weekday - 1;
 
-    // Normalize today's live weight into a 0–1 bar height if available
     if (latestWeight != null) {
       const minW = 40.0, maxW = 120.0;
       values[todayIndex] =
@@ -371,6 +582,8 @@ class _BodyCompositionScreenState extends State<BodyCompositionScreen> {
       }).toList(),
     );
   }
+
+  // ── Action buttons ────────────────────────────────────────────────────────
 
   Widget _buildActionButtons() {
     return Row(
@@ -448,26 +661,26 @@ class _BodyCompositionScreenState extends State<BodyCompositionScreen> {
                   const SizedBox(width: 10),
                   Expanded(
                     child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        'AI Coach',
-                        style: GoogleFonts.inter(
-                          fontSize: 13,
-                          fontWeight: FontWeight.w600,
-                          color: AppColors.textDark,
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          'AI Coach',
+                          style: GoogleFonts.inter(
+                            fontSize: 13,
+                            fontWeight: FontWeight.w600,
+                            color: AppColors.textDark,
+                          ),
                         ),
-                      ),
-                      Text(
-                        'Get diet & exercise tips',
-                        overflow: TextOverflow.ellipsis,
-                        style: GoogleFonts.inter(
-                          fontSize: 11,
-                          color: AppColors.textMedium,
+                        Text(
+                          'Get diet & exercise tips',
+                          overflow: TextOverflow.ellipsis,
+                          style: GoogleFonts.inter(
+                            fontSize: 11,
+                            color: AppColors.textMedium,
+                          ),
                         ),
-                      ),
-                    ],
-                  ),
+                      ],
+                    ),
                   ),
                 ],
               ),
@@ -477,4 +690,22 @@ class _BodyCompositionScreenState extends State<BodyCompositionScreen> {
       ],
     );
   }
+}
+
+// ── Banner config helper ──────────────────────────────────────────────────────
+
+class _BannerConfig {
+  final Color bgColor, borderColor, iconColor, titleColor;
+  final IconData icon;
+  final String title, subtitle;
+
+  const _BannerConfig({
+    required this.bgColor,
+    required this.borderColor,
+    required this.iconColor,
+    required this.titleColor,
+    required this.icon,
+    required this.title,
+    required this.subtitle,
+  });
 }

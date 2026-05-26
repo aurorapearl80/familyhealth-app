@@ -1,17 +1,66 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:provider/provider.dart';
+import '../../services/auth_service.dart';
+import '../../services/ble_summary_service.dart';
+import '../../services/connectivity_service.dart';
 import '../../theme/app_colors.dart';
+import '../auth/login_screen.dart';
 import '../vitals/heart_rate_screen.dart';
 import '../vitals/body_composition_screen.dart';
+import '../../widgets/lottie_background.dart';
 
 class HomeDashboardScreen extends StatelessWidget {
   const HomeDashboardScreen({super.key});
+
+  // ── Logout ────────────────────────────────────────────────────────────────
+
+  Future<void> _logout(BuildContext context) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: Text(
+          'Log Out',
+          style: GoogleFonts.inter(fontWeight: FontWeight.w700),
+        ),
+        content: Text(
+          'Are you sure you want to log out?',
+          style: GoogleFonts.inter(fontSize: 14, color: AppColors.textMedium),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: Text('Cancel',
+                style: GoogleFonts.inter(color: AppColors.textMedium)),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(true),
+            child: Text('Log Out',
+                style: GoogleFonts.inter(
+                    color: AppColors.danger, fontWeight: FontWeight.w600)),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed == true) {
+      await AuthService.clearToken();
+      if (context.mounted) {
+        context.read<BleSummaryService>().clear();
+        Navigator.of(context).pushAndRemoveUntil(
+          MaterialPageRoute(builder: (_) => const LoginScreen()),
+          (_) => false,
+        );
+      }
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: AppColors.lightBg,
-      body: SafeArea(
+      body: LottieBackground(child: SafeArea(
         child: Column(
           children: [
             _buildTopBar(context),
@@ -44,21 +93,23 @@ class HomeDashboardScreen extends StatelessWidget {
             ),
           ],
         ),
-      ),
+      )),
     );
   }
 
   Widget _buildTopBar(BuildContext context) {
     return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+      padding: const EdgeInsets.fromLTRB(16, 12, 8, 0),
       child: Row(
         children: [
+          // Avatar
           CircleAvatar(
             radius: 20,
             backgroundColor: AppColors.lightCard,
             child: Icon(Icons.person, color: AppColors.textMedium, size: 22),
           ),
-          const Spacer(),
+          const SizedBox(width: 10),
+          // Title
           Text(
             'Home Dashboard',
             style: GoogleFonts.inter(
@@ -68,28 +119,60 @@ class HomeDashboardScreen extends StatelessWidget {
             ),
           ),
           const Spacer(),
+          // ── Connectivity chip ──────────────────────────────────────────
+          Consumer<ConnectivityService>(
+            builder: (context, conn, _) {
+              final (icon, color, bg) = switch (conn.quality) {
+                ConnectionQuality.wifi => (
+                    Icons.wifi_rounded,
+                    const Color(0xFF2E7D32),
+                    const Color(0xFFE8F5E9),
+                  ),
+                ConnectionQuality.mobile => (
+                    Icons.signal_cellular_alt_rounded,
+                    const Color(0xFFE65100),
+                    const Color(0xFFFFF3E0),
+                  ),
+                ConnectionQuality.none => (
+                    Icons.wifi_off_rounded,
+                    AppColors.danger,
+                    const Color(0xFFFFECEC),
+                  ),
+              };
+              return Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                decoration: BoxDecoration(
+                  color: bg,
+                  borderRadius: BorderRadius.circular(20),
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(icon, size: 14, color: color),
+                    const SizedBox(width: 4),
+                    Text(
+                      conn.label,
+                      style: GoogleFonts.inter(
+                        fontSize: 11,
+                        fontWeight: FontWeight.w600,
+                        color: color,
+                      ),
+                    ),
+                  ],
+                ),
+              );
+            },
+          ),
+          // Notifications
           IconButton(
             icon: Icon(Icons.notifications_outlined, color: AppColors.textMedium),
             onPressed: () {},
           ),
+          // ── Logout ─────────────────────────────────────────────────────
           IconButton(
-            icon: Icon(Icons.add, color: AppColors.textMedium),
-            onPressed: () {},
-          ),
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-            decoration: BoxDecoration(
-              color: AppColors.lightCard,
-              borderRadius: BorderRadius.circular(8),
-            ),
-            child: Text(
-              '+2',
-              style: GoogleFonts.inter(
-                fontSize: 12,
-                fontWeight: FontWeight.w600,
-                color: AppColors.textMedium,
-              ),
-            ),
+            tooltip: 'Log Out',
+            icon: Icon(Icons.logout_rounded, color: AppColors.textMedium),
+            onPressed: () => _logout(context),
           ),
         ],
       ),

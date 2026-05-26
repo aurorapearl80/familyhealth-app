@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import '../../theme/app_colors.dart';
+import '../../widgets/lottie_background.dart';
 
 class ActivityScreen extends StatelessWidget {
   const ActivityScreen({super.key});
@@ -9,7 +10,7 @@ class ActivityScreen extends StatelessWidget {
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: AppColors.lightBg,
-      body: SafeArea(
+      body: LottieBackground(child: SafeArea(
         child: Column(
           children: [
             _buildAppBar(context),
@@ -40,7 +41,7 @@ class ActivityScreen extends StatelessWidget {
             ),
           ],
         ),
-      ),
+      )),
     );
   }
 

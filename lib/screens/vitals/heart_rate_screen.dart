@@ -1,17 +1,56 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:provider/provider.dart';
+import '../../services/ble_summary_service.dart';
 import '../../theme/app_colors.dart';
 import '../../widgets/vitals_app_bar.dart';
 import 'body_temperature_screen.dart';
+import '../../widgets/lottie_background.dart';
 
 class HeartRateScreen extends StatelessWidget {
   const HeartRateScreen({super.key});
 
+  // ── Helpers ────────────────────────────────────────────────────────────────
+
+  static String _formatTimeAgo(DateTime dt) {
+    final diff = DateTime.now().difference(dt);
+    if (diff.inSeconds < 60) return 'Just now';
+    if (diff.inMinutes < 60) return '${diff.inMinutes}m ago';
+    if (diff.inHours < 24) return '${diff.inHours}h ago';
+    if (diff.inDays < 30) return '${diff.inDays}d ago';
+    return '${(diff.inDays / 30).floor()}mo ago';
+  }
+
+  static String _hrStatus(int? hr) {
+    if (hr == null) return 'No Reading';
+    if (hr < 60) return 'Low';
+    if (hr <= 100) return 'Normal';
+    return 'Elevated';
+  }
+
   @override
   Widget build(BuildContext context) {
+    final summary = context.watch<BleSummaryService>();
+    final hr = summary.heartRate;
+    final hrDisplay = hr?.toString() ?? '--';
+    final hrTimeStr = summary.heartRateDate != null
+        ? _formatTimeAgo(summary.heartRateDate!)
+        : 'no data';
+    final hrStatus = _hrStatus(hr);
+
+    final temp = summary.temperature;
+    final tempDisplay = temp != null ? temp.toStringAsFixed(1) : '--';
+    final tempStatus = temp == null
+        ? 'No Reading'
+        : temp <= 37.2
+            ? 'Normal'
+            : temp <= 38.0
+                ? 'Slight Fever'
+                : 'Fever';
+
     return Scaffold(
       backgroundColor: AppColors.lightBg,
-      body: SafeArea(
+      body: LottieBackground(child: SafeArea(
         child: Column(
           children: [
             const VitalsAppBar(title: 'Vitals'),
@@ -19,16 +58,16 @@ class HeartRateScreen extends StatelessWidget {
               child: SingleChildScrollView(
                 child: Column(
                   children: [
-                    _buildHeroCard(),
+                    _buildHeroCard(hrDisplay, hrTimeStr),
                     Padding(
                       padding: const EdgeInsets.all(16),
                       child: Column(
                         children: [
-                          _buildAiInsights(),
+                          _buildAiInsights(hrDisplay, hrStatus),
                           const SizedBox(height: 12),
                           _buildStatsRow(),
                           const SizedBox(height: 12),
-                          _buildBodyTemperatureCard(context),
+                          _buildBodyTemperatureCard(context, tempDisplay, tempStatus),
                         ],
                       ),
                     ),
@@ -38,11 +77,11 @@ class HeartRateScreen extends StatelessWidget {
             ),
           ],
         ),
-      ),
+      )),
     );
   }
 
-  Widget _buildHeroCard() {
+  Widget _buildHeroCard(String hrDisplay, String hrTimeStr) {
     return Container(
       margin: const EdgeInsets.all(16),
       padding: const EdgeInsets.all(24),
@@ -78,7 +117,7 @@ class HeartRateScreen extends StatelessWidget {
             text: TextSpan(
               children: [
                 TextSpan(
-                  text: '81',
+                  text: hrDisplay,
                   style: GoogleFonts.inter(
                     fontSize: 72,
                     fontWeight: FontWeight.w700,
@@ -99,7 +138,7 @@ class HeartRateScreen extends StatelessWidget {
           ),
           const SizedBox(height: 8),
           Text(
-            'a month ago',
+            hrTimeStr,
             style: GoogleFonts.inter(fontSize: 13, color: Colors.white60),
           ),
           const SizedBox(height: 16),
@@ -159,7 +198,7 @@ class HeartRateScreen extends StatelessWidget {
     );
   }
 
-  Widget _buildAiInsights() {
+  Widget _buildAiInsights(String hrDisplay, String hrStatus) {
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
@@ -192,7 +231,10 @@ class HeartRateScreen extends StatelessWidget {
           ),
           const SizedBox(height: 12),
           Text(
-            'Your resting heart rate of 81 bpm is slightly higher than your usual average. Factors like stress or poor sleep could be influencing this.',
+            hrDisplay == '--'
+                ? 'No heart rate data available yet. Connect your BLE device to start a reading.'
+                : 'Your latest heart rate is $hrDisplay bpm — status: $hrStatus. '
+                    'Factors like stress or poor sleep can influence readings.',
             style: GoogleFonts.inter(
               fontSize: 13,
               color: AppColors.textMedium,
@@ -285,7 +327,8 @@ class HeartRateScreen extends StatelessWidget {
     );
   }
 
-  Widget _buildBodyTemperatureCard(BuildContext context) {
+  Widget _buildBodyTemperatureCard(
+      BuildContext context, String tempDisplay, String tempStatus) {
     return GestureDetector(
       onTap: () => Navigator.of(context).push(
         MaterialPageRoute(builder: (_) => const BodyTemperatureScreen()),
@@ -337,7 +380,7 @@ class HeartRateScreen extends StatelessWidget {
                     crossAxisAlignment: CrossAxisAlignment.end,
                     children: [
                       Text(
-                        '36.6',
+                        tempDisplay,
                         style: GoogleFonts.manrope(
                           fontSize: 28,
                           fontWeight: FontWeight.w700,
@@ -371,11 +414,15 @@ class HeartRateScreen extends StatelessWidget {
                     borderRadius: BorderRadius.circular(9999),
                   ),
                   child: Text(
-                    'Normal',
+                    tempStatus,
                     style: GoogleFonts.inter(
                       fontSize: 11,
                       fontWeight: FontWeight.w700,
-                      color: const Color(0xFF1A9E5C),
+                      color: tempStatus == 'Normal'
+                          ? const Color(0xFF1A9E5C)
+                          : tempStatus == 'No Reading'
+                              ? AppColors.textMedium
+                              : AppColors.warning,
                       letterSpacing: 0.4,
                     ),
                   ),

@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import '../../theme/app_colors.dart';
 import 'family_map_screen.dart';
+import '../../widgets/lottie_background.dart';
 
 class MessagesScreen extends StatelessWidget {
   const MessagesScreen({super.key});
@@ -10,7 +11,7 @@ class MessagesScreen extends StatelessWidget {
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: Colors.white,
-      body: SafeArea(
+      body: LottieBackground(child: SafeArea(
         child: Column(
           children: [
             _buildHeader(context),
@@ -19,7 +20,7 @@ class MessagesScreen extends StatelessWidget {
             Expanded(child: _buildConversationList()),
           ],
         ),
-      ),
+      )),
       floatingActionButton: FloatingActionButton(
         onPressed: () {},
         backgroundColor: AppColors.primary,

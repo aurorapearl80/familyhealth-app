@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
 import '../../theme/app_colors.dart';
+import '../../widgets/lottie_background.dart';
 
 class FamilyMapScreen extends StatefulWidget {
   final bool isActive;
@@ -59,7 +60,7 @@ class _FamilyMapScreenState extends State<FamilyMapScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: AppColors.lightBg,
-      body: SafeArea(
+      body: LottieBackground(child: SafeArea(
         child: Stack(
           children: [
             Column(
@@ -109,7 +110,7 @@ class _FamilyMapScreenState extends State<FamilyMapScreen> {
             ),
           ],
         ),
-      ),
+      )),
     );
   }
 

@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:provider/provider.dart';
+import '../services/connectivity_service.dart';
 import '../theme/app_colors.dart';
 import 'home/home_dashboard_screen.dart';
 import 'achieve/activity_screen.dart';
@@ -28,24 +30,30 @@ class _MainNavScreenState extends State<MainNavScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: AppColors.lightBg,
-      body: IndexedStack(
-        index: _selectedIndex,
+      body: Column(
         children: [
-          const HomeDashboardScreen(),
-          const ActivityScreen(),
-          const MessagesScreen(),
-          FamilyMapScreen(isActive: _selectedIndex == 3),
-          const DevicesScreen(),
+          // ── Global offline banner (visible on all tabs) ─────────────────
+          _buildConnectivityBanner(),
+          // ── Tab content ─────────────────────────────────────────────────
+          Expanded(
+            child: IndexedStack(
+              index: _selectedIndex,
+              children: [
+                const HomeDashboardScreen(),
+                const ActivityScreen(),
+                const MessagesScreen(),
+                FamilyMapScreen(isActive: _selectedIndex == 3),
+                const DevicesScreen(),
+              ],
+            ),
+          ),
         ],
       ),
       bottomNavigationBar: Container(
         decoration: const BoxDecoration(
           color: Colors.white,
           border: Border(
-            top: BorderSide(
-              color: Color(0xFFEEEEF5),
-              width: 1,
-            ),
+            top: BorderSide(color: Color(0xFFEEEEF5), width: 1),
           ),
         ),
         child: SafeArea(
@@ -67,13 +75,55 @@ class _MainNavScreenState extends State<MainNavScreen> {
     );
   }
 
+  // ── Connectivity banner ───────────────────────────────────────────────────
+
+  Widget _buildConnectivityBanner() {
+    return Consumer<ConnectivityService>(
+      builder: (context, conn, _) {
+        // Only show the banner when offline
+        if (conn.isOnline) return const SizedBox.shrink();
+
+        return Material(
+          color: const Color(0xFFB71C1C),
+          child: SafeArea(
+            bottom: false,
+            child: Container(
+              width: double.infinity,
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+              child: Row(
+                children: [
+                  const Icon(Icons.wifi_off_rounded,
+                      color: Colors.white, size: 16),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      'No internet connection — some features may be unavailable',
+                      style: GoogleFonts.inter(
+                        fontSize: 12,
+                        color: Colors.white,
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  // ── Bottom nav ────────────────────────────────────────────────────────────
+
   Widget _buildNavItem(int index, IconData activeIcon, IconData inactiveIcon, String label) {
     final isSelected = _selectedIndex == index;
-    final activeColor = index == 1 || index == 2 || index == 3 ? AppColors.primary : Colors.black;
+    final activeColor = index == 1 || index == 2 || index == 3
+        ? AppColors.primary
+        : Colors.black;
     final inactiveColor = AppColors.textLight;
 
     if (index == 2 && isSelected) {
-      // Share tab - circular blue button
       return GestureDetector(
         onTap: () => setState(() => _selectedIndex = index),
         child: Column(
@@ -136,7 +186,8 @@ class _MainNavScreenState extends State<MainNavScreen> {
                 style: GoogleFonts.inter(
                   fontSize: 11,
                   color: isSelected ? activeColor : inactiveColor,
-                  fontWeight: isSelected ? FontWeight.w600 : FontWeight.w400,
+                  fontWeight:
+                      isSelected ? FontWeight.w600 : FontWeight.w400,
                 ),
               ),
             ],

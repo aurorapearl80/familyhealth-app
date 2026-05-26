@@ -8,7 +8,9 @@
       "PowerShell(winget --version 2>&1)",
       "PowerShell(winget install Google.Flutter --silent --accept-package-agreements --accept-source-agreements 2>&1)",
       "PowerShell(winget search flutter 2>&1)",
-      "PowerShell(head -20)"
+      "PowerShell(head -20)",
+      "PowerShell(flutter devices *)",
+      "PowerShell(flutter run *)"
     ]
   }
 }

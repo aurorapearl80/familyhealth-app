@@ -1,7 +1,12 @@
 import 'dart:convert';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:http/http.dart' as http;
+import 'package:lottie/lottie.dart';
+import 'package:provider/provider.dart';
+import '../../services/auth_service.dart';
+import '../../services/ble_summary_service.dart';
 import '../../theme/app_colors.dart';
 import '../main_nav_screen.dart';
 
@@ -13,8 +18,8 @@ class LoginScreen extends StatefulWidget {
 }
 
 class _LoginScreenState extends State<LoginScreen> {
-  final _emailController = TextEditingController(text: 'userjade@gmail.com');
-  final _passwordController = TextEditingController(text: 'userjade@123');
+  final _emailController = TextEditingController(text: 'melyna.greenfelder29@example.com');
+  final _passwordController = TextEditingController(text: 'password123');
   bool _obscurePassword = true;
   bool _isLoading = false;
   String? _errorMessage;
@@ -45,7 +50,14 @@ class _LoginScreenState extends State<LoginScreen> {
       final data = jsonDecode(response.body) as Map<String, dynamic>;
 
       if (response.statusCode == 200 && data['token'] != null) {
+        // Serial is returned at the top-level of the login response (nullable)
+        final serial = data['serial'] as String?;
+
+        await AuthService.saveToken(data['token'] as String);
+        await AuthService.saveSerial(serial);
         if (!mounted) return;
+        // Fetch the latest BLE summary (serial is optional in the request)
+        context.read<BleSummaryService>().fetch();
         Navigator.of(context).pushReplacement(
           MaterialPageRoute(builder: (_) => const MainNavScreen()),
         );
@@ -67,10 +79,27 @@ class _LoginScreenState extends State<LoginScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: const Color(0xFFF8F8FA),
-      body: SafeArea(
-        child: SingleChildScrollView(
-          padding: const EdgeInsets.symmetric(horizontal: 28),
-          child: Column(
+      body: Stack(
+        fit: StackFit.expand,
+        children: [
+          // ── Lottie background ───────────────────────────────────────────
+          Center(
+            child: Opacity(
+              opacity: 0.15,
+              child: Lottie.asset(
+                'assets/animations/login_icon.json',
+                width: 280,
+                height: 280,
+                fit: BoxFit.contain,
+                repeat: true,
+              ),
+            ),
+          ),
+          // ── Login content ───────────────────────────────────────────────
+          SafeArea(
+            child: SingleChildScrollView(
+              padding: const EdgeInsets.symmetric(horizontal: 28),
+              child: Column(
             crossAxisAlignment: CrossAxisAlignment.center,
             children: [
               const SizedBox(height: 48),
@@ -298,6 +327,8 @@ class _LoginScreenState extends State<LoginScreen> {
             ],
           ),
         ),
+      ),
+        ],
       ),
     );
   }

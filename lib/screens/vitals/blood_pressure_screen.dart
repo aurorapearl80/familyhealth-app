@@ -1,16 +1,114 @@
+import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:provider/provider.dart';
+import '../../models/device_readings.dart';
+import '../../services/ble_constants.dart';
 import '../../services/ble_scan_service.dart';
+import '../../services/ble_summary_service.dart';
+import '../../services/blood_pressure_api_service.dart';
+import '../../services/health_database.dart';
 import '../../theme/app_colors.dart';
 import '../../widgets/vitals_app_bar.dart';
+import '../../widgets/lottie_background.dart';
 
-class BloodPressureScreen extends StatelessWidget {
+enum _UploadState { idle, sending, success, savedOffline, error }
+
+class BloodPressureScreen extends StatefulWidget {
   const BloodPressureScreen({super.key});
+
+  @override
+  State<BloodPressureScreen> createState() => _BloodPressureScreenState();
+}
+
+class _BloodPressureScreenState extends State<BloodPressureScreen> {
+  _UploadState _uploadState = _UploadState.idle;
+  DateTime? _lastProcessedAt;
+
+  static const _deviceId = '66437be266c8833a1c42d7aa';
+  static const _timezone = 'Asia/Manila';
+
+  // ── Lifecycle ─────────────────────────────────────────────────────────────
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      context.read<BleScanService>().addListener(_onBleChanged);
+    });
+  }
+
+  @override
+  void dispose() {
+    context.read<BleScanService>().removeListener(_onBleChanged);
+    super.dispose();
+  }
+
+  // ── BLE listener ──────────────────────────────────────────────────────────
+
+  void _onBleChanged() {
+    final ble = context.read<BleScanService>();
+    if (ble.readings.lastReadingKind != BleReadingKind.bloodPressure) return;
+    final updated = ble.readings.lastUpdated;
+    if (updated == null || updated == _lastProcessedAt) return;
+    _lastProcessedAt = updated;
+    _handleNewReading(ble.readings);
+  }
+
+  Future<void> _handleNewReading(DeviceReadings readings) async {
+    final systolic = readings.systolic;
+    final diastolic = readings.diastolic;
+    final bpm = readings.pulseRate;
+    if (systolic == null || diastolic == null || bpm == null) return;
+
+    final measuredAt = _formatMeasuredAt(readings.lastUpdated ?? DateTime.now());
+
+    setState(() => _uploadState = _UploadState.sending);
+
+    final connectivity = await Connectivity().checkConnectivity();
+    final isOnline = connectivity.any((r) => r != ConnectivityResult.none);
+
+    if (isOnline) {
+      final ok = await BloodPressureApiService.sendReading(
+        systolic: systolic,
+        diastolic: diastolic,
+        bpm: bpm,
+        measuredAt: measuredAt,
+        deviceId: _deviceId,
+        timezone: _timezone,
+      );
+      setState(() => _uploadState = ok ? _UploadState.success : _UploadState.error);
+    } else {
+      await HealthDatabase.insertBloodPressureReading(
+        systolic: systolic,
+        diastolic: diastolic,
+        bpm: bpm,
+        measuredAt: measuredAt,
+        deviceId: _deviceId,
+        timezone: _timezone,
+      );
+      setState(() => _uploadState = _UploadState.savedOffline);
+    }
+
+    await Future.delayed(const Duration(seconds: 4));
+    if (mounted) setState(() => _uploadState = _UploadState.idle);
+  }
+
+  // ── Helpers ───────────────────────────────────────────────────────────────
+
+  String _formatMeasuredAt(DateTime dt) {
+    final y = dt.year.toString().padLeft(4, '0');
+    final mo = dt.month.toString().padLeft(2, '0');
+    final d = dt.day.toString().padLeft(2, '0');
+    final h = dt.hour.toString().padLeft(2, '0');
+    final mi = dt.minute.toString().padLeft(2, '0');
+    final s = dt.second.toString().padLeft(2, '0');
+    return '$y-$mo-$d $h:$mi:$s';
+  }
 
   // ── Classification helpers ──────────────────────────────────────────────
 
-  static String _systolicStatus(int? s) {
+  String _systolicStatus(int? s) {
     if (s == null) return '--';
     if (s < 90) return 'Low';
     if (s < 120) return 'Optimal';
@@ -20,7 +118,7 @@ class BloodPressureScreen extends StatelessWidget {
     return 'Crisis';
   }
 
-  static String _diastolicStatus(int? d) {
+  String _diastolicStatus(int? d) {
     if (d == null) return '--';
     if (d < 60) return 'Low';
     if (d < 80) return 'Optimal';
@@ -29,7 +127,7 @@ class BloodPressureScreen extends StatelessWidget {
     return 'Crisis';
   }
 
-  static String _outcome(int? s, int? d) {
+  String _outcome(int? s, int? d) {
     if (s == null || d == null) return '--';
     if (s >= 180 || d >= 120) return 'Crisis';
     if (s >= 140 || d >= 90) return 'High';
@@ -38,7 +136,7 @@ class BloodPressureScreen extends StatelessWidget {
     return 'Good';
   }
 
-  static Color _statusColor(String status) {
+  Color _statusColor(String status) {
     switch (status) {
       case 'Optimal':
         return AppColors.success;
@@ -53,14 +151,14 @@ class BloodPressureScreen extends StatelessWidget {
     }
   }
 
-  static String _formatTime(DateTime dt) {
+  String _formatTime(DateTime dt) {
     final hour = dt.hour % 12 == 0 ? 12 : dt.hour % 12;
     final min = dt.minute.toString().padLeft(2, '0');
     final period = dt.hour < 12 ? 'AM' : 'PM';
     return '$hour:$min $period';
   }
 
-  static String _wellnessText(int? s, int? d) {
+  String _wellnessText(int? s, int? d) {
     if (s == null || d == null) {
       return 'Turn on the blood pressure monitor to start a reading.';
     }
@@ -79,82 +177,148 @@ class BloodPressureScreen extends StatelessWidget {
     return 'Blood pressure is within the healthy range. Keep up your healthy habits!';
   }
 
+  // ── Upload banner ─────────────────────────────────────────────────────────
+
+  Widget _buildUploadBanner() {
+    if (_uploadState == _UploadState.idle) return const SizedBox.shrink();
+
+    final (Color bg, IconData icon, String message) = switch (_uploadState) {
+      _UploadState.sending => (
+          Colors.blueGrey.shade700,
+          Icons.cloud_upload_outlined,
+          'Sending reading to server…',
+        ),
+      _UploadState.success => (
+          AppColors.success,
+          Icons.cloud_done_outlined,
+          'Reading uploaded successfully.',
+        ),
+      _UploadState.savedOffline => (
+          Colors.orange.shade700,
+          Icons.save_outlined,
+          'No connection — saved offline.',
+        ),
+      _UploadState.error => (
+          AppColors.danger,
+          Icons.cloud_off_outlined,
+          'Upload failed. Will retry later.',
+        ),
+      _UploadState.idle => (Colors.transparent, Icons.circle, ''),
+    };
+
+    return AnimatedContainer(
+      duration: const Duration(milliseconds: 300),
+      color: bg,
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+      child: Row(
+        children: [
+          if (_uploadState == _UploadState.sending)
+            const SizedBox(
+              width: 18,
+              height: 18,
+              child: CircularProgressIndicator(
+                  strokeWidth: 2, color: Colors.white),
+            )
+          else
+            Icon(icon, color: Colors.white, size: 18),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(
+              message,
+              style: GoogleFonts.inter(
+                  fontSize: 13, color: Colors.white, fontWeight: FontWeight.w500),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // ── Build ──────────────────────────────────────────────────────────────────
+
   @override
   Widget build(BuildContext context) {
+    final summary = context.watch<BleSummaryService>();
     return Scaffold(
       backgroundColor: AppColors.lightBg,
-      body: SafeArea(
-        child: Consumer<BleScanService>(
-          builder: (context, ble, _) {
-            final systolic = ble.readings.systolic;
-            final diastolic = ble.readings.diastolic;
-            final bpm = ble.readings.pulseRate;
-            final lastUpdated = ble.readings.lastUpdated;
-            final timeStr =
-                lastUpdated != null ? _formatTime(lastUpdated) : '--:--';
-            final isConnected = ble.registeredDevices
-                .any((d) => d.type.name == 'bloodPressure' && d.connected);
+      body: LottieBackground(
+        child: SafeArea(
+          child: Consumer<BleScanService>(
+            builder: (context, ble, _) {
+              // Use live BLE value; fall back to latest from server
+              final systolic = ble.readings.systolic ?? summary.bpSystolic;
+              final diastolic = ble.readings.diastolic ?? summary.bpDiastolic;
+              final bpm = ble.readings.pulseRate ?? summary.bpBpm;
+              final lastUpdated = ble.readings.lastUpdated ?? summary.bpDate;
+              final timeStr =
+                  lastUpdated != null ? _formatTime(lastUpdated) : '--:--';
+              final isConnected = ble.registeredDevices
+                  .any((d) => d.type.name == 'bloodPressure' && d.connected);
 
-            final systolicDisplay = systolic?.toString() ?? '--';
-            final diastolicDisplay = diastolic?.toString() ?? '--';
-            final bpmDisplay = bpm?.toString() ?? '--';
-            final outcome = _outcome(systolic, diastolic);
-            final systolicStatus = _systolicStatus(systolic);
-            final diastolicStatus = _diastolicStatus(diastolic);
+              final systolicDisplay = systolic?.toString() ?? '--';
+              final diastolicDisplay = diastolic?.toString() ?? '--';
+              final bpmDisplay = bpm?.toString() ?? '--';
+              final outcome = _outcome(systolic, diastolic);
+              final systolicStatus = _systolicStatus(systolic);
+              final diastolicStatus = _diastolicStatus(diastolic);
 
-            return Stack(
-              children: [
-                Column(
-                  children: [
-                    const VitalsAppBar(title: 'Blood Pressure'),
-                    Expanded(
-                      child: SingleChildScrollView(
-                        child: Column(
-                          children: [
-                            _buildHeroCard(
-                              isConnected: isConnected,
-                              systolicDisplay: systolicDisplay,
-                              diastolicDisplay: diastolicDisplay,
-                              bpmDisplay: bpmDisplay,
-                              timeStr: timeStr,
-                              outcome: outcome,
-                            ),
-                            Padding(
-                              padding:
-                                  const EdgeInsets.symmetric(horizontal: 16),
-                              child: Column(
-                                children: [
-                                  const SizedBox(height: 16),
-                                  _buildStatusRow(
-                                    systolicStatus: systolicStatus,
-                                    diastolicStatus: diastolicStatus,
-                                  ),
-                                  const SizedBox(height: 12),
-                                  _buildWellnessInsight(
-                                      _wellnessText(systolic, diastolic)),
-                                  const SizedBox(height: 80),
-                                ],
+              return Stack(
+                children: [
+                  Column(
+                    children: [
+                      const VitalsAppBar(title: 'Blood Pressure'),
+                      _buildUploadBanner(),
+                      Expanded(
+                        child: SingleChildScrollView(
+                          child: Column(
+                            children: [
+                              _buildHeroCard(
+                                isConnected: isConnected,
+                                systolicDisplay: systolicDisplay,
+                                diastolicDisplay: diastolicDisplay,
+                                bpmDisplay: bpmDisplay,
+                                timeStr: timeStr,
+                                outcome: outcome,
                               ),
-                            ),
-                          ],
+                              Padding(
+                                padding:
+                                    const EdgeInsets.symmetric(horizontal: 16),
+                                child: Column(
+                                  children: [
+                                    const SizedBox(height: 16),
+                                    _buildStatusRow(
+                                      systolicStatus: systolicStatus,
+                                      diastolicStatus: diastolicStatus,
+                                    ),
+                                    const SizedBox(height: 12),
+                                    _buildWellnessInsight(
+                                        _wellnessText(systolic, diastolic)),
+                                    const SizedBox(height: 80),
+                                  ],
+                                ),
+                              ),
+                            ],
+                          ),
                         ),
                       ),
-                    ),
-                  ],
-                ),
-                Positioned(
-                  bottom: 20,
-                  left: 0,
-                  right: 0,
-                  child: Center(child: _buildNewReadingFab()),
-                ),
-              ],
-            );
-          },
+                    ],
+                  ),
+                  Positioned(
+                    bottom: 20,
+                    left: 0,
+                    right: 0,
+                    child: Center(child: _buildNewReadingFab()),
+                  ),
+                ],
+              );
+            },
+          ),
         ),
       ),
     );
   }
+
+  // ── Sub-widgets ────────────────────────────────────────────────────────────
 
   Widget _buildHeroCard({
     required bool isConnected,
@@ -184,15 +348,13 @@ class BloodPressureScreen extends StatelessWidget {
                 ),
                 child: const Icon(Icons.refresh, color: Colors.white, size: 18),
               ),
-              // Connection status
               Row(
                 children: [
                   Container(
                     width: 8,
                     height: 8,
                     decoration: BoxDecoration(
-                      color:
-                          isConnected ? Colors.greenAccent : Colors.white38,
+                      color: isConnected ? Colors.greenAccent : Colors.white38,
                       shape: BoxShape.circle,
                     ),
                   ),
@@ -201,8 +363,7 @@ class BloodPressureScreen extends StatelessWidget {
                     isConnected ? 'Live' : 'No device',
                     style: GoogleFonts.inter(
                       fontSize: 12,
-                      color:
-                          isConnected ? Colors.greenAccent : Colors.white54,
+                      color: isConnected ? Colors.greenAccent : Colors.white54,
                       fontWeight: FontWeight.w600,
                     ),
                   ),

@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'dart:math' as math;
+import '../../widgets/lottie_background.dart';
 import '../../theme/app_colors.dart';
 
 class HealthScoreScreen extends StatelessWidget {
@@ -10,7 +11,7 @@ class HealthScoreScreen extends StatelessWidget {
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: AppColors.darkBg,
-      body: SafeArea(
+      body: LottieBackground(child: SafeArea(
         child: Column(
           children: [
             _buildAppBar(context),
@@ -34,7 +35,7 @@ class HealthScoreScreen extends StatelessWidget {
             ),
           ],
         ),
-      ),
+      )),
     );
   }
 

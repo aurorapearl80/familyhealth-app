@@ -5,6 +5,7 @@ import 'package:provider/provider.dart';
 import '../../models/ble_device_info.dart';
 import '../../services/ble_constants.dart';
 import '../../services/ble_scan_service.dart';
+import '../../services/ble_summary_service.dart';
 import '../../theme/app_colors.dart';
 import '../vitals/blood_oxygen_screen.dart';
 import '../vitals/blood_pressure_screen.dart';
@@ -13,15 +14,18 @@ import '../vitals/heart_rate_screen.dart';
 import '../vitals/body_temperature_screen.dart';
 import '../vitals/blood_glucose_screen.dart';
 import '../achieve/health_score_screen.dart';
+import '../../widgets/lottie_background.dart';
 
 class DevicesScreen extends StatelessWidget {
   const DevicesScreen({super.key});
 
   @override
   Widget build(BuildContext context) {
+    // Watch both providers so the grid rebuilds when either changes
+    final summary = context.watch<BleSummaryService>();
     return Scaffold(
       backgroundColor: AppColors.lightBg,
-      body: SafeArea(
+      body: LottieBackground(child: SafeArea(
         child: Consumer<BleScanService>(
           builder: (context, ble, _) {
             return Column(
@@ -37,7 +41,7 @@ class DevicesScreen extends StatelessWidget {
                         const SizedBox(height: 12),
                         _buildSectionTitle('Health Vitals'),
                         const SizedBox(height: 12),
-                        _buildVitalsGrid(context, ble),
+                        _buildVitalsGrid(context, ble, summary),
                         const SizedBox(height: 20),
                         _buildSectionTitle('Connected Devices'),
                         const SizedBox(height: 12),
@@ -51,7 +55,7 @@ class DevicesScreen extends StatelessWidget {
             );
           },
         ),
-      ),
+      )),
     );
   }
 
@@ -154,12 +158,37 @@ class DevicesScreen extends StatelessWidget {
     );
   }
 
-  Widget _buildVitalsGrid(BuildContext context, BleScanService ble) {
+  Widget _buildVitalsGrid(
+      BuildContext context, BleScanService ble, BleSummaryService summary) {
     final r = ble.readings;
+
+    // ── Resolved values: live BLE first, then server summary ─────────────────
+    final heartRateVal =
+        r.heartRate?.toString() ?? r.pulseRate?.toString() ??
+        summary.heartRate?.toString() ?? '--';
+
+    final bloodOxygenVal =
+        r.bloodOxygen?.toString() ?? summary.bloodOxygen?.toString() ?? '--';
+
+    final bpVal = (r.systolic != null && r.diastolic != null)
+        ? '${r.systolic}/${r.diastolic}'
+        : (summary.bpSystolic != null && summary.bpDiastolic != null)
+            ? '${summary.bpSystolic}/${summary.bpDiastolic}'
+            : '--/--';
+
+    final weightVal = r.weight?.toStringAsFixed(1) ??
+        summary.weight?.toStringAsFixed(1) ?? '--';
+
+    final tempVal = r.temperature?.toStringAsFixed(1) ??
+        summary.temperature?.toStringAsFixed(1) ?? '--';
+
+    final glucoseVal = r.bloodGlucose?.toString() ??
+        summary.glucose?.toInt().toString() ?? '--';
+
     final vitals = [
       {
         'title': 'Heart Rate',
-        'value': r.heartRateDisplay,
+        'value': heartRateVal,
         'unit': 'bpm',
         'gradient': AppColors.purpleGradient,
         'icon': Icons.favorite,
@@ -167,7 +196,7 @@ class DevicesScreen extends StatelessWidget {
       },
       {
         'title': 'Blood Oxygen',
-        'value': r.bloodOxygenDisplay,
+        'value': bloodOxygenVal,
         'unit': '%',
         'gradient': AppColors.pinkGradient,
         'icon': Icons.air,
@@ -175,7 +204,7 @@ class DevicesScreen extends StatelessWidget {
       },
       {
         'title': 'Blood Pressure',
-        'value': r.bloodPressureDisplay,
+        'value': bpVal,
         'unit': 'mmHg',
         'gradient': AppColors.orangeGradient,
         'icon': Icons.monitor_heart,
@@ -183,7 +212,7 @@ class DevicesScreen extends StatelessWidget {
       },
       {
         'title': 'Body Comp',
-        'value': r.weightDisplay,
+        'value': weightVal,
         'unit': 'kgs',
         'gradient': AppColors.greenGradient,
         'icon': Icons.accessibility_new,
@@ -201,7 +230,7 @@ class DevicesScreen extends StatelessWidget {
       },
       {
         'title': 'Body Temp',
-        'value': r.temperatureDisplay,
+        'value': tempVal,
         'unit': '°C',
         'gradient': const LinearGradient(
           begin: Alignment.topLeft,
@@ -213,7 +242,7 @@ class DevicesScreen extends StatelessWidget {
       },
       {
         'title': 'Blood Glucose',
-        'value': r.bloodGlucoseDisplay,
+        'value': glucoseVal,
         'unit': r.glucoseUnit ?? 'mg/dL',
         'gradient': const LinearGradient(
           begin: Alignment.topLeft,
