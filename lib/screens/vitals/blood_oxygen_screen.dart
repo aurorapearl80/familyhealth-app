@@ -8,9 +8,11 @@ import '../../services/ble_scan_service.dart';
 import '../../services/ble_summary_service.dart';
 import '../../services/health_database.dart';
 import '../../services/oximeter_api_service.dart';
+import '../../services/vitals_history_service.dart';
 import '../../theme/app_colors.dart';
 import '../../widgets/lottie_background.dart';
 import '../../widgets/vitals_app_bar.dart';
+import '../../widgets/vitals_history_section.dart';
 
 enum _UploadState { idle, sending, success, savedOffline, error }
 
@@ -44,6 +46,8 @@ class _BloodOxygenScreenState extends State<BloodOxygenScreen> {
   // ── BLE listener ──────────────────────────────────────────────────────────
 
   void _onBleChanged() {
+    // Skip BLE processing if blood oxygen is disabled for this account
+    if (!context.read<BleSummaryService>().isBloodOxygenEnabled) return;
     final r = _ble.readings;
     if (r.lastReadingKind != BleReadingKind.bloodOxygen) return;
     if (r.bloodOxygen == null) return;
@@ -154,32 +158,60 @@ class _BloodOxygenScreenState extends State<BloodOxygenScreen> {
                   // ── Upload banner ────────────────────────────────────────
                   _buildUploadBanner(),
                   Expanded(
-                    child: SingleChildScrollView(
-                      child: Column(
-                        children: [
-                          _buildHeroCard(
-                            isConnected: isConnected,
-                            spo2Display: spo2Display,
-                            bpmDisplay: bpmDisplay,
-                            timeStr: timeStr,
-                            outcome: outcome,
-                          ),
-                          Padding(
-                            padding:
-                                const EdgeInsets.symmetric(horizontal: 16),
-                            child: Column(
-                              children: [
-                                const SizedBox(height: 16),
-                                _buildWeeklyTrend(spo2),
-                                const SizedBox(height: 12),
-                                _buildTipAndAlert(outcome, spo2Display),
-                                const SizedBox(height: 16),
-                                _buildHistory(),
-                                const SizedBox(height: 24),
-                              ],
+                    child: RefreshIndicator(
+                      onRefresh: () =>
+                          context.read<BleSummaryService>().fetch(),
+                      color: AppColors.primary,
+                      child: SingleChildScrollView(
+                        physics: const AlwaysScrollableScrollPhysics(),
+                        child: Column(
+                          children: [
+                            _buildHeroCard(
+                              isConnected: isConnected,
+                              spo2Display: spo2Display,
+                              bpmDisplay: bpmDisplay,
+                              timeStr: timeStr,
+                              outcome: outcome,
                             ),
-                          ),
-                        ],
+                            Padding(
+                              padding:
+                                  const EdgeInsets.symmetric(horizontal: 16),
+                              child: Column(
+                                children: [
+                                  const SizedBox(height: 16),
+                                  _buildWeeklyTrend(spo2),
+                                  const SizedBox(height: 12),
+                                  _buildTipAndAlert(outcome, spo2Display),
+                                  const SizedBox(height: 16),
+                                  VitalsHistorySection(
+                                    endpoint: 'oximeter-readings',
+                                    title: 'SpO₂ History',
+                                    rowIcon: Icons.air,
+                                    iconBgColor: const Color(0xFFFCE4EC),
+                                    iconColor: const Color(0xFFE88FA8),
+                                    formatValue: (item) {
+                                      final o = item['oxygen'] ??
+                                          item['blood_oxygen'] ??
+                                          item['spo2'];
+                                      return o != null ? '$o%' : '--';
+                                    },
+                                    formatSubtitle: (item) {
+                                      final pr = item['pulse_rate'] ??
+                                          item['bpm'] ??
+                                          item['heart_rate'];
+                                      final ago = VitalsHistoryService.timeAgo(
+                                          item['measured_at']?.toString());
+                                      return pr != null
+                                          ? '$pr bpm · $ago'
+                                          : ago;
+                                    },
+                                  ),
+                                  const SizedBox(height: 24),
+                                ],
+                              ),
+                            ),
+                          ],
+                        ),
                       ),
                     ),
                   ),
@@ -633,95 +665,6 @@ class _BloodOxygenScreenState extends State<BloodOxygenScreen> {
     );
   }
 
-  // ── History ───────────────────────────────────────────────────────────────
-
-  Widget _buildHistory() {
-    return Column(
-      children: [
-        Row(
-          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-          children: [
-            Text('History',
-                style: GoogleFonts.inter(
-                    fontSize: 18,
-                    fontWeight: FontWeight.w700,
-                    color: AppColors.textDark)),
-            TextButton(
-              onPressed: () {},
-              child: Text('SEE ALL',
-                  style: GoogleFonts.inter(
-                      fontSize: 13,
-                      fontWeight: FontWeight.w600,
-                      color: AppColors.primary)),
-            ),
-          ],
-        ),
-        const SizedBox(height: 8),
-        _buildHistoryItem(
-          icon: Icons.calendar_today_outlined,
-          iconColor: const Color(0xFFE88FA8),
-          title: 'Yesterday, 10:24 PM',
-          subtitle: 'Handheld Reading',
-          value: '98%',
-        ),
-        const SizedBox(height: 8),
-        _buildHistoryItem(
-          icon: Icons.bedtime_outlined,
-          iconColor: AppColors.primary,
-          title: 'May 21, 03:15 AM',
-          subtitle: 'Sleep Monitoring',
-          value: '96%',
-        ),
-      ],
-    );
-  }
-
-  Widget _buildHistoryItem({
-    required IconData icon,
-    required Color iconColor,
-    required String title,
-    required String subtitle,
-    required String value,
-  }) {
-    return Container(
-      padding: const EdgeInsets.all(14),
-      decoration: BoxDecoration(
-          color: Colors.white, borderRadius: BorderRadius.circular(14)),
-      child: Row(
-        children: [
-          Container(
-            padding: const EdgeInsets.all(8),
-            decoration: BoxDecoration(
-              color: iconColor.withValues(alpha: 0.15),
-              borderRadius: BorderRadius.circular(10),
-            ),
-            child: Icon(icon, color: iconColor, size: 18),
-          ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(title,
-                    style: GoogleFonts.inter(
-                        fontSize: 13,
-                        fontWeight: FontWeight.w600,
-                        color: AppColors.textDark)),
-                Text(subtitle,
-                    style: GoogleFonts.inter(
-                        fontSize: 11, color: AppColors.textMedium)),
-              ],
-            ),
-          ),
-          Text(value,
-              style: GoogleFonts.inter(
-                  fontSize: 16,
-                  fontWeight: FontWeight.w700,
-                  color: AppColors.textDark)),
-        ],
-      ),
-    );
-  }
 }
 
 // ── Banner config helper ──────────────────────────────────────────────────────

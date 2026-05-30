@@ -1,3 +1,5 @@
+import 'package:flutter/foundation.dart';
+import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 
 /// Handles persistent storage of the auth token and device serial
@@ -20,11 +22,48 @@ class AuthService {
     return prefs.getString(_tokenKey);
   }
 
-  /// Clears both the token and serial on logout.
+  // ── Server logout ──────────────────────────────────────────────────────────
+
+  /// Calls `POST /api/auth-monitoring/logout` to invalidate the token
+  /// on the server. Safe to ignore failures — local cleanup still proceeds.
+  static Future<void> logoutFromServer() async {
+    final token = await getToken();
+    if (token == null) return;
+    try {
+      await http
+          .post(
+            Uri.parse('https://familywatchtoday.com/api/auth-monitoring/logout'),
+            headers: {
+              'Authorization': 'Bearer $token',
+              'Accept': 'application/json',
+            },
+          )
+          .timeout(const Duration(seconds: 10));
+    } catch (e) {
+      debugPrint('[AuthService] logout API error: $e');
+    }
+  }
+
+  /// Clears token, serial, and user ID on logout.
   static Future<void> clearToken() async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.remove(_tokenKey);
     await prefs.remove(_serialKey);
+    await prefs.remove(_userIdKey);
+  }
+
+  // ── User ID ────────────────────────────────────────────────────────────────
+
+  static const _userIdKey = 'user_id';
+
+  static Future<void> saveUserId(String id) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_userIdKey, id);
+  }
+
+  static Future<String?> getUserId() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getString(_userIdKey);
   }
 
   // ── Serial ─────────────────────────────────────────────────────────────────

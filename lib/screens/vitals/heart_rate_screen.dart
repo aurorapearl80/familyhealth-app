@@ -2,8 +2,10 @@ import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:provider/provider.dart';
 import '../../services/ble_summary_service.dart';
+import '../../services/vitals_history_service.dart';
 import '../../theme/app_colors.dart';
 import '../../widgets/vitals_app_bar.dart';
+import '../../widgets/vitals_history_section.dart';
 import 'body_temperature_screen.dart';
 import '../../widgets/lottie_background.dart';
 
@@ -55,23 +57,60 @@ class HeartRateScreen extends StatelessWidget {
           children: [
             const VitalsAppBar(title: 'Vitals'),
             Expanded(
-              child: SingleChildScrollView(
-                child: Column(
-                  children: [
-                    _buildHeroCard(hrDisplay, hrTimeStr),
-                    Padding(
-                      padding: const EdgeInsets.all(16),
-                      child: Column(
-                        children: [
-                          _buildAiInsights(hrDisplay, hrStatus),
-                          const SizedBox(height: 12),
-                          _buildStatsRow(),
-                          const SizedBox(height: 12),
-                          _buildBodyTemperatureCard(context, tempDisplay, tempStatus),
-                        ],
+              child: RefreshIndicator(
+                onRefresh: () => context.read<BleSummaryService>().fetch(),
+                color: AppColors.primary,
+                child: SingleChildScrollView(
+                  physics: const AlwaysScrollableScrollPhysics(),
+                  child: Column(
+                    children: [
+                      _buildHeroCard(hrDisplay, hrTimeStr),
+                      Padding(
+                        padding: const EdgeInsets.all(16),
+                        child: Column(
+                          children: [
+                            _buildAiInsights(hrDisplay, hrStatus),
+                            const SizedBox(height: 12),
+                            _buildStatsRow(),
+                            const SizedBox(height: 12),
+                            _buildBodyTemperatureCard(context, tempDisplay, tempStatus),
+                            const SizedBox(height: 12),
+                            VitalsHistorySection(
+                              endpoint: 'heart-rates',
+                              title: 'Heart Rate History',
+                              rowIcon: Icons.favorite,
+                              iconBgColor: const Color(0xFFEDE7F6),
+                              iconColor: const Color(0xFF7C3AED),
+                              formatValue: (item) {
+                                final hr = item['heart_rate'] ??
+                                    item['bpm'] ??
+                                    item['rate'];
+                                return hr != null ? '$hr bpm' : '--';
+                              },
+                              formatSubtitle: (item) {
+                                final raw = item['heart_rate'] ??
+                                    item['bpm'] ??
+                                    item['rate'];
+                                final v = raw != null
+                                    ? num.tryParse(raw.toString())?.toInt()
+                                    : null;
+                                final status = v == null
+                                    ? ''
+                                    : v < 60
+                                        ? 'Low · '
+                                        : v <= 100
+                                            ? 'Normal · '
+                                            : 'Elevated · ';
+                                final ago = VitalsHistoryService.timeAgo(
+                                    item['measured_at']?.toString());
+                                return '$status$ago';
+                              },
+                            ),
+                          ],
+                        ),
                       ),
-                    ),
-                  ],
+                    ],
+                  ),
                 ),
               ),
             ),

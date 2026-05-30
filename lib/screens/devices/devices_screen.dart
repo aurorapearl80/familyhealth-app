@@ -7,6 +7,7 @@ import '../../services/ble_constants.dart';
 import '../../services/ble_scan_service.dart';
 import '../../services/ble_summary_service.dart';
 import '../../theme/app_colors.dart';
+import '../../widgets/profile_avatar.dart';
 import '../vitals/blood_oxygen_screen.dart';
 import '../vitals/blood_pressure_screen.dart';
 import '../vitals/body_composition_screen.dart';
@@ -32,22 +33,28 @@ class DevicesScreen extends StatelessWidget {
               children: [
                 _buildHeader(ble),
                 Expanded(
-                  child: SingleChildScrollView(
-                    padding: const EdgeInsets.all(16),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        _buildStatusBanner(ble),
-                        const SizedBox(height: 12),
-                        _buildSectionTitle('Health Vitals'),
-                        const SizedBox(height: 12),
-                        _buildVitalsGrid(context, ble, summary),
-                        const SizedBox(height: 20),
-                        _buildSectionTitle('Connected Devices'),
-                        const SizedBox(height: 12),
-                        _buildDevicesList(ble),
-                        const SizedBox(height: 24),
-                      ],
+                  child: RefreshIndicator(
+                    onRefresh: () => context.read<BleSummaryService>().fetch(),
+                    color: AppColors.primary,
+                    child: SingleChildScrollView(
+                      // physics must allow overscroll for RefreshIndicator to trigger
+                      physics: const AlwaysScrollableScrollPhysics(),
+                      padding: const EdgeInsets.all(16),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          _buildStatusBanner(ble),
+                          const SizedBox(height: 12),
+                          _buildSectionTitle('Health Vitals'),
+                          const SizedBox(height: 12),
+                          _buildVitalsGrid(context, ble, summary),
+                          const SizedBox(height: 20),
+                          _buildSectionTitle('Connected Devices'),
+                          const SizedBox(height: 12),
+                          _buildDevicesList(ble, summary),
+                          const SizedBox(height: 24),
+                        ],
+                      ),
                     ),
                   ),
                 ),
@@ -86,12 +93,7 @@ class DevicesScreen extends StatelessWidget {
                     color: AppColors.textDark),
                 onPressed: () {},
               ),
-              CircleAvatar(
-                radius: 18,
-                backgroundColor: AppColors.lightCard,
-                child: const Icon(Icons.person,
-                    color: AppColors.textMedium, size: 20),
-              ),
+              const ProfileAvatar(radius: 18),
             ],
           ),
         ],
@@ -185,8 +187,9 @@ class DevicesScreen extends StatelessWidget {
     final glucoseVal = r.bloodGlucose?.toString() ??
         summary.glucose?.toInt().toString() ?? '--';
 
-    final vitals = [
-      {
+    // Build the full list, then filter by types_availability
+    final allVitals = <Map<String, Object>>[
+      if (summary.isElectrocardiogramEnabled) {
         'title': 'Heart Rate',
         'value': heartRateVal,
         'unit': 'bpm',
@@ -194,7 +197,7 @@ class DevicesScreen extends StatelessWidget {
         'icon': Icons.favorite,
         'screen': const HeartRateScreen(),
       },
-      {
+      if (summary.isBloodOxygenEnabled) {
         'title': 'Blood Oxygen',
         'value': bloodOxygenVal,
         'unit': '%',
@@ -202,7 +205,7 @@ class DevicesScreen extends StatelessWidget {
         'icon': Icons.air,
         'screen': const BloodOxygenScreen(),
       },
-      {
+      if (summary.isBloodPressureEnabled) {
         'title': 'Blood Pressure',
         'value': bpVal,
         'unit': 'mmHg',
@@ -210,7 +213,7 @@ class DevicesScreen extends StatelessWidget {
         'icon': Icons.monitor_heart,
         'screen': const BloodPressureScreen(),
       },
-      {
+      if (summary.isWeightEnabled) {
         'title': 'Body Comp',
         'value': weightVal,
         'unit': 'kgs',
@@ -218,6 +221,7 @@ class DevicesScreen extends StatelessWidget {
         'icon': Icons.accessibility_new,
         'screen': const BodyCompositionScreen(),
       },
+      // Health Score is always shown (not a device type)
       {
         'title': 'Health Score',
         'value': '68',
@@ -228,7 +232,7 @@ class DevicesScreen extends StatelessWidget {
         'icon': Icons.star,
         'screen': const HealthScoreScreen(),
       },
-      {
+      if (summary.isTemperatureEnabled) {
         'title': 'Body Temp',
         'value': tempVal,
         'unit': '°C',
@@ -240,7 +244,7 @@ class DevicesScreen extends StatelessWidget {
         'icon': Icons.thermostat_outlined,
         'screen': const BodyTemperatureScreen(),
       },
-      {
+      if (summary.isBloodGlucoseEnabled) {
         'title': 'Blood Glucose',
         'value': glucoseVal,
         'unit': r.glucoseUnit ?? 'mg/dL',
@@ -253,6 +257,7 @@ class DevicesScreen extends StatelessWidget {
         'screen': const BloodGlucoseScreen(),
       },
     ];
+    final vitals = allVitals;
 
     return GridView.builder(
       shrinkWrap: true,
@@ -322,8 +327,11 @@ class DevicesScreen extends StatelessWidget {
     );
   }
 
-  Widget _buildDevicesList(BleScanService ble) {
-    final displayDevices = ble.registeredDevices;
+  Widget _buildDevicesList(BleScanService ble, BleSummaryService summary) {
+    // Only show devices whose type is enabled via types_availability
+    final displayDevices = ble.registeredDevices
+        .where((d) => summary.isDeviceTypeEnabled(d.type))
+        .toList();
 
     return Column(
       children: displayDevices.map((d) {

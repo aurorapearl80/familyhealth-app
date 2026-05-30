@@ -2,8 +2,11 @@ import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import 'auth_service.dart';
+import 'ble_constants.dart';
+import 'health_database.dart';
 
-/// Fetches the latest readings summary for a registered BLE serial from the server.
+/// Fetches the latest readings summary for a registered BLE serial from the
+/// server and caches the result in SQLite so data is still available offline.
 class BleSummaryService extends ChangeNotifier {
   static const _endpoint =
       'https://familywatchtoday.com/api/ble-devices/summary';
@@ -14,7 +17,7 @@ class BleSummaryService extends ChangeNotifier {
   bool get isLoading => _isLoading;
   String? get error => _error;
 
-  // ── Per-type values ────────────────────────────────────────────────────────
+  // ── Per-type vitals values ─────────────────────────────────────────────────
 
   double? _temperature;
   DateTime? _temperatureDate;
@@ -33,6 +36,18 @@ class BleSummaryService extends ChangeNotifier {
   int? _heartRate;
   DateTime? _heartRateDate;
 
+  // ── types_availability ─────────────────────────────────────────────────────
+  // Default to true so everything is shown until the API says otherwise.
+
+  bool _availTemperature = true;
+  bool _availBloodOxygen = true;
+  bool _availBloodPressure = true;
+  bool _availWeight = true;
+  bool _availBloodGlucose = true;
+  bool _availElectrocardiogram = true;
+
+  // ── Vitals getters ─────────────────────────────────────────────────────────
+
   double? get temperature => _temperature;
   DateTime? get temperatureDate => _temperatureDate;
   int? get bloodOxygen => _bloodOxygen;
@@ -50,6 +65,33 @@ class BleSummaryService extends ChangeNotifier {
   int? get heartRate => _heartRate;
   DateTime? get heartRateDate => _heartRateDate;
 
+  // ── types_availability getters ─────────────────────────────────────────────
+
+  bool get isTemperatureEnabled => _availTemperature;
+  bool get isBloodOxygenEnabled => _availBloodOxygen;
+  bool get isBloodPressureEnabled => _availBloodPressure;
+  bool get isWeightEnabled => _availWeight;
+  bool get isBloodGlucoseEnabled => _availBloodGlucose;
+  bool get isElectrocardiogramEnabled => _availElectrocardiogram;
+
+  /// Returns whether a given BLE device type is enabled for this account.
+  bool isDeviceTypeEnabled(BleDeviceType type) {
+    switch (type) {
+      case BleDeviceType.temperature:
+        return _availTemperature;
+      case BleDeviceType.bloodOxygen:
+        return _availBloodOxygen;
+      case BleDeviceType.bloodPressure:
+        return _availBloodPressure;
+      case BleDeviceType.weight:
+        return _availWeight;
+      case BleDeviceType.bloodGlucose:
+        return _availBloodGlucose;
+      case BleDeviceType.unknown:
+        return true;
+    }
+  }
+
   // ── Fetch ──────────────────────────────────────────────────────────────────
 
   Future<void> fetch() async {
@@ -58,15 +100,18 @@ class BleSummaryService extends ChangeNotifier {
 
     final serial = await AuthService.getSerial();
 
-    // Serial is required by the API — skip silently if not yet stored
+    // Pre-populate UI from cache while network request is in flight.
+    await _loadFromCache();
+
     if (serial == null) {
-      debugPrint('[Summary] serial not stored — skipping fetch');
+      debugPrint('[Summary] serial not stored — showing cached data');
+      notifyListeners();
       return;
     }
 
     _isLoading = true;
     _error = null;
-    notifyListeners();
+    notifyListeners(); // Show cached data + loading indicator
 
     try {
       final uri =
@@ -82,14 +127,18 @@ class BleSummaryService extends ChangeNotifier {
         final body = jsonDecode(response.body);
         if (body is Map<String, dynamic>) {
           _parseResponse(body);
+          await _saveToCache();
         }
       } else {
         _error = 'Server error (${response.statusCode})';
-        debugPrint('[Summary] fetch failed ${response.statusCode}: ${response.body}');
+        debugPrint(
+            '[Summary] fetch failed ${response.statusCode}: ${response.body}');
+        // Cached values already loaded — keep showing them.
       }
     } catch (e) {
       _error = 'Network error';
       debugPrint('[Summary] fetch error: $e');
+      // Cached values already loaded — keep showing them.
     } finally {
       _isLoading = false;
       notifyListeners();
@@ -99,6 +148,17 @@ class BleSummaryService extends ChangeNotifier {
   // ── Parsing ────────────────────────────────────────────────────────────────
 
   void _parseResponse(Map<String, dynamic> body) {
+    // Parse types_availability first
+    final avail = body['types_availability'];
+    if (avail is Map) {
+      _availBloodGlucose = avail['blood_glucose'] == true;
+      _availBloodPressure = avail['blood_pressure'] == true;
+      _availWeight = avail['weight'] == true;
+      _availBloodOxygen = avail['blood_oxygen'] == true;
+      _availElectrocardiogram = avail['electrocardiogram'] == true;
+      _availTemperature = avail['temperature'] == true;
+    }
+
     final rawList = body['data'];
     if (rawList == null || rawList is! List) return;
 
@@ -156,8 +216,92 @@ class BleSummaryService extends ChangeNotifier {
     debugPrint('[Summary] loaded — '
         'temp=$_temperature °C | spo2=$_bloodOxygen% | '
         'bp=$_bpSystolic/$_bpDiastolic | weight=$_weight kg | '
-        'glucose=$_glucose | hr=$_heartRate bpm');
+        'glucose=$_glucose | hr=$_heartRate bpm | '
+        'avail: temp=$_availTemperature spo2=$_availBloodOxygen '
+        'bp=$_availBloodPressure wt=$_availWeight '
+        'glu=$_availBloodGlucose ecg=$_availElectrocardiogram');
   }
+
+  // ── SQLite cache ──────────────────────────────────────────────────────────
+
+  Future<void> _saveToCache() async {
+    try {
+      await HealthDatabase.saveSummaryCache(
+        temperature: _temperature,
+        temperatureDate: _temperatureDate?.toIso8601String(),
+        bloodOxygen: _bloodOxygen,
+        bloodOxygenPulseRate: _bloodOxygenPulseRate,
+        bloodOxygenDate: _bloodOxygenDate?.toIso8601String(),
+        bpSystolic: _bpSystolic,
+        bpDiastolic: _bpDiastolic,
+        bpBpm: _bpBpm,
+        bpDate: _bpDate?.toIso8601String(),
+        weight: _weight,
+        weightDate: _weightDate?.toIso8601String(),
+        glucose: _glucose,
+        glucoseMailValue: _glucoseMailValue,
+        glucoseDate: _glucoseDate?.toIso8601String(),
+        heartRate: _heartRate,
+        heartRateDate: _heartRateDate?.toIso8601String(),
+        availTemperature: _availTemperature,
+        availBloodOxygen: _availBloodOxygen,
+        availBloodPressure: _availBloodPressure,
+        availWeight: _availWeight,
+        availBloodGlucose: _availBloodGlucose,
+        availElectrocardiogram: _availElectrocardiogram,
+      );
+      debugPrint('[Summary] saved to SQLite cache');
+    } catch (e) {
+      debugPrint('[Summary] cache save failed: $e');
+    }
+  }
+
+  Future<void> _loadFromCache() async {
+    try {
+      final row = await HealthDatabase.loadSummaryCache();
+      if (row == null) {
+        debugPrint('[Summary] no SQLite cache found');
+        return;
+      }
+
+      _temperature = row['temperature'] as double?;
+      _temperatureDate = _parseDate(row['temperature_date']);
+      _bloodOxygen = row['blood_oxygen'] as int?;
+      _bloodOxygenPulseRate = row['blood_oxygen_pulse_rate'] as int?;
+      _bloodOxygenDate = _parseDate(row['blood_oxygen_date']);
+      _bpSystolic = row['bp_systolic'] as int?;
+      _bpDiastolic = row['bp_diastolic'] as int?;
+      _bpBpm = row['bp_bpm'] as int?;
+      _bpDate = _parseDate(row['bp_date']);
+      _weight = row['weight'] as double?;
+      _weightDate = _parseDate(row['weight_date']);
+      _glucose = row['glucose'] as double?;
+      _glucoseMailValue = row['glucose_mail_value'] as double?;
+      _glucoseDate = _parseDate(row['glucose_date']);
+      _heartRate = row['heart_rate'] as int?;
+      _heartRateDate = _parseDate(row['heart_rate_date']);
+
+      _availTemperature = (row['avail_temperature'] as int? ?? 1) == 1;
+      _availBloodOxygen = (row['avail_blood_oxygen'] as int? ?? 1) == 1;
+      _availBloodPressure = (row['avail_blood_pressure'] as int? ?? 1) == 1;
+      _availWeight = (row['avail_weight'] as int? ?? 1) == 1;
+      _availBloodGlucose = (row['avail_blood_glucose'] as int? ?? 1) == 1;
+      _availElectrocardiogram =
+          (row['avail_electrocardiogram'] as int? ?? 1) == 1;
+
+      debugPrint('[Summary] restored from SQLite cache — '
+          'temp=$_temperature | spo2=$_bloodOxygen | bp=$_bpSystolic/$_bpDiastolic');
+    } catch (e) {
+      debugPrint('[Summary] cache load failed: $e');
+    }
+  }
+
+  static DateTime? _parseDate(Object? raw) {
+    if (raw == null) return null;
+    return DateTime.tryParse(raw as String);
+  }
+
+  // ── Clear ──────────────────────────────────────────────────────────────────
 
   /// Clear all cached values (call on logout).
   void clear() {
@@ -178,6 +322,13 @@ class BleSummaryService extends ChangeNotifier {
     _heartRate = null;
     _heartRateDate = null;
     _error = null;
+    // Reset availability to true (show all) after logout
+    _availTemperature = true;
+    _availBloodOxygen = true;
+    _availBloodPressure = true;
+    _availWeight = true;
+    _availBloodGlucose = true;
+    _availElectrocardiogram = true;
     notifyListeners();
   }
 }

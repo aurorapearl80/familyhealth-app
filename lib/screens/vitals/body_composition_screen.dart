@@ -10,6 +10,7 @@ import '../../services/health_database.dart';
 import '../../services/weight_api_service.dart';
 import '../../theme/app_colors.dart';
 import '../../widgets/vitals_app_bar.dart';
+import '../../widgets/vitals_history_section.dart';
 
 enum _UploadState { idle, sending, success, savedOffline, error }
 
@@ -45,6 +46,8 @@ class _BodyCompositionScreenState extends State<BodyCompositionScreen> {
   // ── BLE listener ──────────────────────────────────────────────────────────
 
   void _onBleChanged() {
+    // Skip BLE processing if weight is disabled for this account
+    if (!context.read<BleSummaryService>().isWeightEnabled) return;
     final r = _ble.readings;
     if (r.lastReadingKind != BleReadingKind.weight) return;
     if (r.weight == null) return;
@@ -161,35 +164,57 @@ class _BodyCompositionScreenState extends State<BodyCompositionScreen> {
                 // ── Upload banner ────────────────────────────────────────
                 _buildUploadBanner(),
                 Expanded(
-                  child: SingleChildScrollView(
-                    child: Column(
-                      children: [
-                        _buildHeroCard(
-                          weightDisplay: weightDisplay,
-                          timeStr: timeStr,
-                          isConnected: isConnected,
-                          bodyWaterDisplay: bodyWaterDisplay,
-                          leanMassDisplay: leanMassDisplay,
-                          fatMassDisplay: fatMassDisplay,
-                          bodyFatDisplay: bodyFatDisplay,
-                          bmiDisplay: bmiDisplay,
-                          bmiLabel: bmiLabel,
-                          outcomeDisplay: outcomeDisplay,
-                        ),
-                        Padding(
-                          padding:
-                              const EdgeInsets.symmetric(horizontal: 16),
-                          child: Column(
-                            children: [
-                              const SizedBox(height: 16),
-                              _buildWeightProgress(weight),
-                              const SizedBox(height: 12),
-                              _buildActionButtons(),
-                              const SizedBox(height: 24),
-                            ],
+                  child: RefreshIndicator(
+                    onRefresh: () =>
+                        context.read<BleSummaryService>().fetch(),
+                    color: AppColors.primary,
+                    child: SingleChildScrollView(
+                      physics: const AlwaysScrollableScrollPhysics(),
+                      child: Column(
+                        children: [
+                          _buildHeroCard(
+                            weightDisplay: weightDisplay,
+                            timeStr: timeStr,
+                            isConnected: isConnected,
+                            bodyWaterDisplay: bodyWaterDisplay,
+                            leanMassDisplay: leanMassDisplay,
+                            fatMassDisplay: fatMassDisplay,
+                            bodyFatDisplay: bodyFatDisplay,
+                            bmiDisplay: bmiDisplay,
+                            bmiLabel: bmiLabel,
+                            outcomeDisplay: outcomeDisplay,
                           ),
-                        ),
-                      ],
+                          Padding(
+                            padding:
+                                const EdgeInsets.symmetric(horizontal: 16),
+                            child: Column(
+                              children: [
+                                const SizedBox(height: 16),
+                                _buildWeightProgress(weight),
+                                const SizedBox(height: 12),
+                                _buildActionButtons(),
+                                const SizedBox(height: 16),
+                                VitalsHistorySection(
+                                  endpoint: 'weights',
+                                  title: 'Weight History',
+                                  rowIcon: Icons.scale,
+                                  iconBgColor: const Color(0xFFDCEDC8),
+                                  iconColor: const Color(0xFF558B2F),
+                                  formatValue: (item) {
+                                    final raw = item['weight'];
+                                    if (raw == null) return '--';
+                                    final w = num.tryParse(raw.toString());
+                                    return w != null
+                                        ? '${w.toStringAsFixed(1)} kgs'
+                                        : '--';
+                                  },
+                                ),
+                                const SizedBox(height: 24),
+                              ],
+                            ),
+                          ),
+                        ],
+                      ),
                     ),
                   ),
                 ),

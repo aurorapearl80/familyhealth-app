@@ -7,6 +7,9 @@ import 'package:lottie/lottie.dart';
 import 'package:provider/provider.dart';
 import '../../services/auth_service.dart';
 import '../../services/ble_summary_service.dart';
+import '../../services/location_service.dart';
+import '../../services/onesignal_service.dart';
+import '../../services/patient_service.dart';
 import '../../theme/app_colors.dart';
 import '../main_nav_screen.dart';
 
@@ -18,7 +21,7 @@ class LoginScreen extends StatefulWidget {
 }
 
 class _LoginScreenState extends State<LoginScreen> {
-  final _emailController = TextEditingController(text: 'melyna.greenfelder29@example.com');
+  final _emailController = TextEditingController(text: 'ezra.mohr4@example.com');
   final _passwordController = TextEditingController(text: 'password123');
   bool _obscurePassword = true;
   bool _isLoading = false;
@@ -44,6 +47,7 @@ class _LoginScreenState extends State<LoginScreen> {
         body: jsonEncode({
           'email': _emailController.text.trim(),
           'password': _passwordController.text,
+          'device_name': 'FamilyHealth-Flutter',
         }),
       );
 
@@ -52,12 +56,21 @@ class _LoginScreenState extends State<LoginScreen> {
       if (response.statusCode == 200 && data['token'] != null) {
         // Serial is returned at the top-level of the login response (nullable)
         final serial = data['serial'] as String?;
+        // User ID is returned as 'id' in the login response
+        final userId = data['id']?.toString();
 
         await AuthService.saveToken(data['token'] as String);
         await AuthService.saveSerial(serial);
+        if (userId != null) await AuthService.saveUserId(userId);
         if (!mounted) return;
-        // Fetch the latest BLE summary (serial is optional in the request)
+
+        // ── POST-LOGIN: user ID → OneSignal → location ────────────────────
+        await _initTrackingServices(context, userId);
+
+        if (!mounted) return;
+        // Fetch the latest BLE summary and patient profile
         context.read<BleSummaryService>().fetch();
+        context.read<PatientService>().fetch();
         Navigator.of(context).pushReplacement(
           MaterialPageRoute(builder: (_) => const MainNavScreen()),
         );
@@ -72,6 +85,29 @@ class _LoginScreenState extends State<LoginScreen> {
         _errorMessage = 'Network error. Please check your connection.';
         _isLoading = false;
       });
+    }
+  }
+
+  // ── Post-login tracking setup ─────────────────────────────────────────────
+
+  /// [userId] comes directly from the login response field `id`.
+  Future<void> _initTrackingServices(
+      BuildContext ctx, String? userId) async {
+    // 1. Identify user in OneSignal (if ID is available)
+    if (userId != null) {
+      try {
+        await OneSignalService.requestPermission();
+        await OneSignalService.loginUser(userId);
+      } catch (e) {
+        debugPrint('[Login] OneSignal setup error: $e');
+      }
+    }
+
+    // 2. Request location permission and start GPS tracking
+    if (!ctx.mounted) return;
+    final granted = await LocationService.requestPermissions();
+    if (granted && ctx.mounted) {
+      await ctx.read<LocationService>().start();
     }
   }
 

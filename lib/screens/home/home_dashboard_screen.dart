@@ -1,60 +1,17 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:provider/provider.dart';
-import '../../services/auth_service.dart';
 import '../../services/ble_summary_service.dart';
 import '../../services/connectivity_service.dart';
+import '../../services/patient_service.dart';
+import '../../widgets/profile_avatar.dart';
 import '../../theme/app_colors.dart';
-import '../auth/login_screen.dart';
 import '../vitals/heart_rate_screen.dart';
 import '../vitals/body_composition_screen.dart';
 import '../../widgets/lottie_background.dart';
 
 class HomeDashboardScreen extends StatelessWidget {
   const HomeDashboardScreen({super.key});
-
-  // ── Logout ────────────────────────────────────────────────────────────────
-
-  Future<void> _logout(BuildContext context) async {
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-        title: Text(
-          'Log Out',
-          style: GoogleFonts.inter(fontWeight: FontWeight.w700),
-        ),
-        content: Text(
-          'Are you sure you want to log out?',
-          style: GoogleFonts.inter(fontSize: 14, color: AppColors.textMedium),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(ctx).pop(false),
-            child: Text('Cancel',
-                style: GoogleFonts.inter(color: AppColors.textMedium)),
-          ),
-          TextButton(
-            onPressed: () => Navigator.of(ctx).pop(true),
-            child: Text('Log Out',
-                style: GoogleFonts.inter(
-                    color: AppColors.danger, fontWeight: FontWeight.w600)),
-          ),
-        ],
-      ),
-    );
-
-    if (confirmed == true) {
-      await AuthService.clearToken();
-      if (context.mounted) {
-        context.read<BleSummaryService>().clear();
-        Navigator.of(context).pushAndRemoveUntil(
-          MaterialPageRoute(builder: (_) => const LoginScreen()),
-          (_) => false,
-        );
-      }
-    }
-  }
 
   @override
   Widget build(BuildContext context) {
@@ -66,28 +23,33 @@ class HomeDashboardScreen extends StatelessWidget {
             _buildTopBar(context),
             _buildQuickStats(context),
             Expanded(
-              child: SingleChildScrollView(
-                padding: const EdgeInsets.symmetric(horizontal: 16),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    const SizedBox(height: 20),
-                    Text(
-                      'My Focus',
-                      style: GoogleFonts.inter(
-                        fontSize: 20,
-                        fontWeight: FontWeight.w700,
-                        color: AppColors.textDark,
+              child: RefreshIndicator(
+                onRefresh: () => context.read<BleSummaryService>().fetch(),
+                color: AppColors.primary,
+                child: SingleChildScrollView(
+                  physics: const AlwaysScrollableScrollPhysics(),
+                  padding: const EdgeInsets.symmetric(horizontal: 16),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const SizedBox(height: 20),
+                      Text(
+                        'My Focus',
+                        style: GoogleFonts.inter(
+                          fontSize: 20,
+                          fontWeight: FontWeight.w700,
+                          color: AppColors.textDark,
+                        ),
                       ),
-                    ),
-                    const SizedBox(height: 12),
-                    _buildWeightCard(context),
-                    const SizedBox(height: 12),
-                    _buildBodyCompositionCard(context),
-                    const SizedBox(height: 12),
-                    _buildEcgCard(context),
-                    const SizedBox(height: 24),
-                  ],
+                      const SizedBox(height: 12),
+                      _buildWeightCard(context),
+                      const SizedBox(height: 12),
+                      _buildBodyCompositionCard(context),
+                      const SizedBox(height: 12),
+                      _buildEcgCard(context),
+                      const SizedBox(height: 24),
+                    ],
+                  ),
                 ),
               ),
             ),
@@ -98,24 +60,38 @@ class HomeDashboardScreen extends StatelessWidget {
   }
 
   Widget _buildTopBar(BuildContext context) {
+    final patient = context.watch<PatientService>();
     return Padding(
       padding: const EdgeInsets.fromLTRB(16, 12, 8, 0),
       child: Row(
         children: [
-          // Avatar
-          CircleAvatar(
-            radius: 20,
-            backgroundColor: AppColors.lightCard,
-            child: Icon(Icons.person, color: AppColors.textMedium, size: 22),
-          ),
+          // Profile avatar — tapping opens ProfileScreen
+          const ProfileAvatar(radius: 20),
           const SizedBox(width: 10),
-          // Title
-          Text(
-            'Home Dashboard',
-            style: GoogleFonts.inter(
-              fontSize: 16,
-              fontWeight: FontWeight.w600,
-              color: AppColors.textDark,
+          // Greeting + name
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  'Welcome back,',
+                  style: GoogleFonts.inter(
+                    fontSize: 11,
+                    color: AppColors.textLight,
+                  ),
+                ),
+                Text(
+                  patient.displayName,
+                  style: GoogleFonts.inter(
+                    fontSize: 15,
+                    fontWeight: FontWeight.w700,
+                    color: AppColors.textDark,
+                  ),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ],
             ),
           ),
           const Spacer(),
@@ -167,12 +143,6 @@ class HomeDashboardScreen extends StatelessWidget {
           IconButton(
             icon: Icon(Icons.notifications_outlined, color: AppColors.textMedium),
             onPressed: () {},
-          ),
-          // ── Logout ─────────────────────────────────────────────────────
-          IconButton(
-            tooltip: 'Log Out',
-            icon: Icon(Icons.logout_rounded, color: AppColors.textMedium),
-            onPressed: () => _logout(context),
           ),
         ],
       ),

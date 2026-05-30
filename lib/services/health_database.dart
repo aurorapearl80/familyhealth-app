@@ -17,13 +17,14 @@ class HealthDatabase {
     final path = join(dbPath, 'health_monitor.db');
     return openDatabase(
       path,
-      version: 5,
+      version: 6,
       onCreate: (db, _) => _createTables(db),
       onUpgrade: (db, oldVersion, newVersion) async {
         if (oldVersion < 2) await _createOximeterTable(db);
         if (oldVersion < 3) await _createWeightTable(db);
         if (oldVersion < 4) await _createBloodPressureTable(db);
         if (oldVersion < 5) await _createGlucoseTable(db);
+        if (oldVersion < 6) await _createSummaryCacheTable(db);
       },
     );
   }
@@ -34,6 +35,7 @@ class HealthDatabase {
     await _createWeightTable(db);
     await _createBloodPressureTable(db);
     await _createGlucoseTable(db);
+    await _createSummaryCacheTable(db);
   }
 
   // ── Temperature ────────────────────────────────────────────────────────────
@@ -311,5 +313,106 @@ class HealthDatabase {
       where: 'id = ?',
       whereArgs: [id],
     );
+  }
+
+  // ── Summary Cache ──────────────────────────────────────────────────────────
+  // Single-row table (id = 1) that caches the latest API summary response.
+
+  static Future<void> _createSummaryCacheTable(Database db) async {
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS summary_cache (
+        id                      INTEGER PRIMARY KEY,
+        temperature             REAL,
+        temperature_date        TEXT,
+        blood_oxygen            INTEGER,
+        blood_oxygen_pulse_rate INTEGER,
+        blood_oxygen_date       TEXT,
+        bp_systolic             INTEGER,
+        bp_diastolic            INTEGER,
+        bp_bpm                  INTEGER,
+        bp_date                 TEXT,
+        weight                  REAL,
+        weight_date             TEXT,
+        glucose                 REAL,
+        glucose_mail_value      REAL,
+        glucose_date            TEXT,
+        heart_rate              INTEGER,
+        heart_rate_date         TEXT,
+        avail_temperature       INTEGER NOT NULL DEFAULT 1,
+        avail_blood_oxygen      INTEGER NOT NULL DEFAULT 1,
+        avail_blood_pressure    INTEGER NOT NULL DEFAULT 1,
+        avail_weight            INTEGER NOT NULL DEFAULT 1,
+        avail_blood_glucose     INTEGER NOT NULL DEFAULT 1,
+        avail_electrocardiogram INTEGER NOT NULL DEFAULT 1,
+        fetched_at              TEXT    NOT NULL
+      )
+    ''');
+  }
+
+  static Future<void> saveSummaryCache({
+    required double? temperature,
+    required String? temperatureDate,
+    required int? bloodOxygen,
+    required int? bloodOxygenPulseRate,
+    required String? bloodOxygenDate,
+    required int? bpSystolic,
+    required int? bpDiastolic,
+    required int? bpBpm,
+    required String? bpDate,
+    required double? weight,
+    required String? weightDate,
+    required double? glucose,
+    required double? glucoseMailValue,
+    required String? glucoseDate,
+    required int? heartRate,
+    required String? heartRateDate,
+    required bool availTemperature,
+    required bool availBloodOxygen,
+    required bool availBloodPressure,
+    required bool availWeight,
+    required bool availBloodGlucose,
+    required bool availElectrocardiogram,
+  }) async {
+    final db = await database;
+    await db.insert(
+      'summary_cache',
+      {
+        'id': 1,
+        'temperature': temperature,
+        'temperature_date': temperatureDate,
+        'blood_oxygen': bloodOxygen,
+        'blood_oxygen_pulse_rate': bloodOxygenPulseRate,
+        'blood_oxygen_date': bloodOxygenDate,
+        'bp_systolic': bpSystolic,
+        'bp_diastolic': bpDiastolic,
+        'bp_bpm': bpBpm,
+        'bp_date': bpDate,
+        'weight': weight,
+        'weight_date': weightDate,
+        'glucose': glucose,
+        'glucose_mail_value': glucoseMailValue,
+        'glucose_date': glucoseDate,
+        'heart_rate': heartRate,
+        'heart_rate_date': heartRateDate,
+        'avail_temperature': availTemperature ? 1 : 0,
+        'avail_blood_oxygen': availBloodOxygen ? 1 : 0,
+        'avail_blood_pressure': availBloodPressure ? 1 : 0,
+        'avail_weight': availWeight ? 1 : 0,
+        'avail_blood_glucose': availBloodGlucose ? 1 : 0,
+        'avail_electrocardiogram': availElectrocardiogram ? 1 : 0,
+        'fetched_at': DateTime.now().toIso8601String(),
+      },
+      conflictAlgorithm: ConflictAlgorithm.replace,
+    );
+  }
+
+  static Future<Map<String, dynamic>?> loadSummaryCache() async {
+    final db = await database;
+    final rows = await db.query(
+      'summary_cache',
+      where: 'id = ?',
+      whereArgs: [1],
+    );
+    return rows.isEmpty ? null : rows.first;
   }
 }

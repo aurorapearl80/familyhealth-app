@@ -5,6 +5,9 @@ import 'package:lottie/lottie.dart';
 import 'package:provider/provider.dart';
 import '../../services/auth_service.dart';
 import '../../services/ble_summary_service.dart';
+import '../../services/location_service.dart';
+import '../../services/onesignal_service.dart';
+import '../../services/patient_service.dart';
 import '../main_nav_screen.dart';
 import 'login_screen.dart';
 
@@ -51,8 +54,23 @@ class _SplashScreenState extends State<SplashScreen>
 
     if (goHome) {
       context.read<BleSummaryService>().fetch();
+      context.read<PatientService>().fetch();
+
+      // Re-register OneSignal identity and resume GPS tracking
+      final userId = await AuthService.getUserId();
+      if (userId != null) {
+        await OneSignalService.requestPermission();
+        await OneSignalService.loginUser(userId);
+      }
+      if (mounted) {
+        final hasPerms = await LocationService.hasPermission();
+        if (hasPerms && mounted) {
+          context.read<LocationService>().start();
+        }
+      }
     }
 
+    if (!mounted) return;
     Navigator.of(context).pushReplacement(
       PageRouteBuilder(
         pageBuilder: (_, __, ___) =>

@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import '../theme/app_colors.dart';
+import 'profile_avatar.dart';
 
 class VitalsAppBar extends StatelessWidget {
   final String title;
@@ -28,14 +29,11 @@ class VitalsAppBar extends StatelessWidget {
             ),
           ),
           IconButton(
-            icon: const Icon(Icons.notifications_outlined, color: AppColors.textDark),
+            icon: const Icon(Icons.notifications_outlined,
+                color: AppColors.textDark),
             onPressed: () {},
           ),
-          CircleAvatar(
-            radius: 16,
-            backgroundColor: AppColors.lightCard,
-            child: const Icon(Icons.person, color: AppColors.textMedium, size: 18),
-          ),
+          const ProfileAvatar(radius: 16),
         ],
       ),
     );

@@ -8,9 +8,11 @@ import '../../services/ble_scan_service.dart';
 import '../../services/ble_summary_service.dart';
 import '../../services/blood_pressure_api_service.dart';
 import '../../services/health_database.dart';
+import '../../services/vitals_history_service.dart';
 import '../../theme/app_colors.dart';
 import '../../widgets/vitals_app_bar.dart';
 import '../../widgets/lottie_background.dart';
+import '../../widgets/vitals_history_section.dart';
 
 enum _UploadState { idle, sending, success, savedOffline, error }
 
@@ -47,6 +49,8 @@ class _BloodPressureScreenState extends State<BloodPressureScreen> {
   // ── BLE listener ──────────────────────────────────────────────────────────
 
   void _onBleChanged() {
+    // Skip BLE processing if blood pressure is disabled for this account
+    if (!context.read<BleSummaryService>().isBloodPressureEnabled) return;
     final ble = context.read<BleScanService>();
     if (ble.readings.lastReadingKind != BleReadingKind.bloodPressure) return;
     final updated = ble.readings.lastUpdated;
@@ -269,35 +273,68 @@ class _BloodPressureScreenState extends State<BloodPressureScreen> {
                       const VitalsAppBar(title: 'Blood Pressure'),
                       _buildUploadBanner(),
                       Expanded(
-                        child: SingleChildScrollView(
-                          child: Column(
-                            children: [
-                              _buildHeroCard(
-                                isConnected: isConnected,
-                                systolicDisplay: systolicDisplay,
-                                diastolicDisplay: diastolicDisplay,
-                                bpmDisplay: bpmDisplay,
-                                timeStr: timeStr,
-                                outcome: outcome,
-                              ),
-                              Padding(
-                                padding:
-                                    const EdgeInsets.symmetric(horizontal: 16),
-                                child: Column(
-                                  children: [
-                                    const SizedBox(height: 16),
-                                    _buildStatusRow(
-                                      systolicStatus: systolicStatus,
-                                      diastolicStatus: diastolicStatus,
-                                    ),
-                                    const SizedBox(height: 12),
-                                    _buildWellnessInsight(
-                                        _wellnessText(systolic, diastolic)),
-                                    const SizedBox(height: 80),
-                                  ],
+                        child: RefreshIndicator(
+                          onRefresh: () =>
+                              context.read<BleSummaryService>().fetch(),
+                          color: AppColors.primary,
+                          child: SingleChildScrollView(
+                            physics: const AlwaysScrollableScrollPhysics(),
+                            child: Column(
+                              children: [
+                                _buildHeroCard(
+                                  isConnected: isConnected,
+                                  systolicDisplay: systolicDisplay,
+                                  diastolicDisplay: diastolicDisplay,
+                                  bpmDisplay: bpmDisplay,
+                                  timeStr: timeStr,
+                                  outcome: outcome,
                                 ),
-                              ),
-                            ],
+                                Padding(
+                                  padding: const EdgeInsets.symmetric(
+                                      horizontal: 16),
+                                  child: Column(
+                                    children: [
+                                      const SizedBox(height: 16),
+                                      _buildStatusRow(
+                                        systolicStatus: systolicStatus,
+                                        diastolicStatus: diastolicStatus,
+                                      ),
+                                      const SizedBox(height: 12),
+                                      _buildWellnessInsight(
+                                          _wellnessText(systolic, diastolic)),
+                                      const SizedBox(height: 16),
+                                      VitalsHistorySection(
+                                        endpoint: 'blood-pressures',
+                                        title: 'BP History',
+                                        rowIcon: Icons.monitor_heart_outlined,
+                                        iconBgColor: const Color(0xFFFFE0CC),
+                                        iconColor: const Color(0xFFFF6B35),
+                                        formatValue: (item) {
+                                          final s = item['systolic'];
+                                          final d = item['diastolic'];
+                                          return (s != null && d != null)
+                                              ? '$s/$d mmHg'
+                                              : '--/--';
+                                        },
+                                        formatSubtitle: (item) {
+                                          final bpm = item['bpm'] ??
+                                              item['pulse_rate'] ??
+                                              item['heart_rate'];
+                                          final ago =
+                                              VitalsHistoryService.timeAgo(
+                                                  item['measured_at']
+                                                      ?.toString());
+                                          return bpm != null
+                                              ? '$bpm bpm · $ago'
+                                              : ago;
+                                        },
+                                      ),
+                                      const SizedBox(height: 80),
+                                    ],
+                                  ),
+                                ),
+                              ],
+                            ),
                           ),
                         ),
                       ),

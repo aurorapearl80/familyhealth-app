@@ -10,6 +10,7 @@ import '../../services/health_database.dart';
 import '../../services/temperature_api_service.dart';
 import '../../theme/app_colors.dart';
 import '../../widgets/lottie_background.dart';
+import '../../widgets/vitals_history_section.dart';
 
 // Upload state machine
 enum _UploadState { idle, sending, success, savedOffline, error }
@@ -49,6 +50,8 @@ class _BodyTemperatureScreenState extends State<BodyTemperatureScreen> {
   // ── BLE listener ─────────────────────────────────────────────────────────
 
   void _onBleChanged() {
+    // Skip BLE processing if temperature is disabled for this account
+    if (!context.read<BleSummaryService>().isTemperatureEnabled) return;
     final readings = _ble.readings;
 
     // Only react to fresh temperature readings
@@ -169,16 +172,38 @@ class _BodyTemperatureScreenState extends State<BodyTemperatureScreen> {
                   // ── Upload status banner ─────────────────────────────────
                   _buildUploadBanner(),
                   Expanded(
-                    child: SingleChildScrollView(
-                      padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
-                      child: Column(
-                        children: [
-                          _buildHeroCard(ble, tempDisplay, timeStr, outcome),
-                          const SizedBox(height: 16),
-                          _buildAlert(outcome, temp),
-                          const SizedBox(height: 16),
-                          _buildWeeklyInsights(temp),
-                        ],
+                    child: RefreshIndicator(
+                      onRefresh: () =>
+                          context.read<BleSummaryService>().fetch(),
+                      color: AppColors.primary,
+                      child: SingleChildScrollView(
+                        physics: const AlwaysScrollableScrollPhysics(),
+                        padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
+                        child: Column(
+                          children: [
+                            _buildHeroCard(ble, tempDisplay, timeStr, outcome),
+                            const SizedBox(height: 16),
+                            _buildAlert(outcome, temp),
+                            const SizedBox(height: 16),
+                            _buildWeeklyInsights(temp),
+                            const SizedBox(height: 16),
+                            VitalsHistorySection(
+                              endpoint: 'temperatures',
+                              title: 'Temperature History',
+                              rowIcon: Icons.thermostat_outlined,
+                              iconBgColor: const Color(0xFFFFE0B2),
+                              iconColor: const Color(0xFFFF8A65),
+                              formatValue: (item) {
+                                final raw = item['temperature'];
+                                if (raw == null) return '--';
+                                final t = num.tryParse(raw.toString());
+                                return t != null
+                                    ? '${t.toStringAsFixed(1)} °C'
+                                    : '--';
+                              },
+                            ),
+                          ],
+                        ),
                       ),
                     ),
                   ),
@@ -641,26 +666,13 @@ class _BodyTemperatureScreenState extends State<BodyTemperatureScreen> {
       ),
       child: Column(
         children: [
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              Text('Weekly Insights',
-                  style: GoogleFonts.inter(
-                      fontSize: 18,
-                      fontWeight: FontWeight.w700,
-                      color: AppColors.textDark)),
-              Row(
-                children: [
-                  Text('Last 7 Days',
-                      style: GoogleFonts.inter(
-                          fontSize: 13,
-                          fontWeight: FontWeight.w500,
-                          color: AppColors.info)),
-                  const Icon(Icons.keyboard_arrow_down,
-                      color: AppColors.info, size: 18),
-                ],
-              ),
-            ],
+          Text(
+            'Weekly Insights',
+            style: GoogleFonts.inter(
+              fontSize: 18,
+              fontWeight: FontWeight.w700,
+              color: AppColors.textDark,
+            ),
           ),
           const SizedBox(height: 24),
           SizedBox(

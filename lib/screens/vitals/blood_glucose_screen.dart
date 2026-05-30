@@ -8,8 +8,10 @@ import '../../services/ble_scan_service.dart';
 import '../../services/ble_summary_service.dart';
 import '../../services/blood_glucose_api_service.dart';
 import '../../services/health_database.dart';
+import '../../services/vitals_history_service.dart';
 import '../../theme/app_colors.dart';
 import '../../widgets/lottie_background.dart';
+import '../../widgets/vitals_history_section.dart';
 
 enum _UploadState { idle, sending, success, savedOffline, error }
 
@@ -56,6 +58,8 @@ class _BloodGlucoseScreenState extends State<BloodGlucoseScreen> {
   // ── BLE listener ──────────────────────────────────────────────────────────
 
   void _onBleChanged() {
+    // Skip BLE processing if blood glucose is disabled for this account
+    if (!context.read<BleSummaryService>().isBloodGlucoseEnabled) return;
     final ble = context.read<BleScanService>();
     if (ble.readings.lastReadingKind != BleReadingKind.bloodGlucose) return;
     final updated = ble.readings.lastUpdated;
@@ -226,22 +230,57 @@ class _BloodGlucoseScreenState extends State<BloodGlucoseScreen> {
                   _buildAppBar(context),
                   _buildUploadBanner(),
                   Expanded(
-                    child: SingleChildScrollView(
-                      padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          _buildHeroCard(
-                            glucoseDisplay: glucoseDisplay,
-                            timeStr: timeStr,
-                            status: status,
-                            statusColor: statusColor,
-                          ),
-                          const SizedBox(height: 20),
-                          _buildInsightsHeader(),
-                          const SizedBox(height: 12),
-                          _buildChartCard(),
-                        ],
+                    child: RefreshIndicator(
+                      onRefresh: () =>
+                          context.read<BleSummaryService>().fetch(),
+                      color: AppColors.primary,
+                      child: SingleChildScrollView(
+                        physics: const AlwaysScrollableScrollPhysics(),
+                        padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            _buildHeroCard(
+                              glucoseDisplay: glucoseDisplay,
+                              timeStr: timeStr,
+                              status: status,
+                              statusColor: statusColor,
+                            ),
+                            const SizedBox(height: 20),
+                            _buildInsightsHeader(),
+                            const SizedBox(height: 12),
+                            _buildChartCard(),
+                            const SizedBox(height: 16),
+                            VitalsHistorySection(
+                              endpoint: 'glucose',
+                              title: 'Glucose History',
+                              rowIcon: Icons.water_drop_outlined,
+                              iconBgColor: const Color(0xFFB3E5FC),
+                              iconColor: const Color(0xFF0288D1),
+                              formatValue: (item) {
+                                final raw = item['glucose'];
+                                if (raw == null) return '--';
+                                final g = num.tryParse(raw.toString());
+                                return g != null
+                                    ? '${g.toStringAsFixed(0)} mg/dL'
+                                    : '--';
+                              },
+                              formatSubtitle: (item) {
+                                final rawMv = item['mail_value'];
+                                final ago = VitalsHistoryService.timeAgo(
+                                    item['measured_at']?.toString());
+                                if (rawMv != null) {
+                                  final mv =
+                                      num.tryParse(rawMv.toString());
+                                  if (mv != null) {
+                                    return '${mv.toStringAsFixed(1)} mmol/L · $ago';
+                                  }
+                                }
+                                return ago;
+                              },
+                            ),
+                          ],
+                        ),
                       ),
                     ),
                   ),
@@ -442,32 +481,13 @@ class _BloodGlucoseScreenState extends State<BloodGlucoseScreen> {
   }
 
   Widget _buildInsightsHeader() {
-    return Row(
-      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-      children: [
-        Text(
-          'Weekly Insights',
-          style: GoogleFonts.inter(
-            fontSize: 18,
-            fontWeight: FontWeight.w700,
-            color: AppColors.textDark,
-          ),
-        ),
-        Row(
-          children: [
-            Text(
-              'Last 7 Days',
-              style: GoogleFonts.inter(
-                fontSize: 13,
-                fontWeight: FontWeight.w500,
-                color: AppColors.info,
-              ),
-            ),
-            const Icon(Icons.keyboard_arrow_down,
-                color: AppColors.info, size: 18),
-          ],
-        ),
-      ],
+    return Text(
+      'Weekly Insights',
+      style: GoogleFonts.inter(
+        fontSize: 18,
+        fontWeight: FontWeight.w700,
+        color: AppColors.textDark,
+      ),
     );
   }
 
