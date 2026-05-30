@@ -50,6 +50,21 @@ class AuthService {
     await prefs.remove(_tokenKey);
     await prefs.remove(_serialKey);
     await prefs.remove(_userIdKey);
+    await prefs.remove(_roleKey);
+  }
+
+  // ── Role ───────────────────────────────────────────────────────────────────
+
+  static const _roleKey = 'role_type';
+
+  static Future<void> saveRoleType(String role) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_roleKey, role);
+  }
+
+  static Future<String?> getRoleType() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getString(_roleKey);
   }
 
   // ── User ID ────────────────────────────────────────────────────────────────

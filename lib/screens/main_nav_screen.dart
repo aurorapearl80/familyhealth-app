@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:provider/provider.dart';
+import '../services/auth_service.dart';
 import '../services/connectivity_service.dart';
 import '../theme/app_colors.dart';
 import 'home/home_dashboard_screen.dart';
@@ -19,32 +20,66 @@ class MainNavScreen extends StatefulWidget {
 
 class _MainNavScreenState extends State<MainNavScreen> {
   late int _selectedIndex;
+  bool _isAdmin = false;
+  bool _roleLoaded = false;
 
   @override
   void initState() {
     super.initState();
     _selectedIndex = widget.initialIndex;
+    _loadRole();
   }
+
+  Future<void> _loadRole() async {
+    final role = await AuthService.getRoleType();
+    if (mounted) {
+      setState(() {
+        _isAdmin = role == 'admin';
+        _roleLoaded = true;
+      });
+    }
+  }
+
+  // ── Screens & nav items built based on role ───────────────────────────────
+
+  List<Widget> get _screens => [
+        const HomeDashboardScreen(),
+        const ActivityScreen(),
+        const MessagesScreen(),
+        if (_isAdmin) FamilyMapScreen(isActive: _selectedIndex == 3),
+        const DevicesScreen(),
+      ];
+
+  // Each entry: (activeIcon, inactiveIcon, label, isSpecial)
+  List<_NavEntry> get _navEntries => [
+        _NavEntry(Icons.home_rounded, Icons.home_outlined, 'Home'),
+        _NavEntry(Icons.show_chart_rounded, Icons.show_chart_outlined, 'Achieve'),
+        _NavEntry(Icons.people_rounded, Icons.people_outlined, 'Share'),
+        if (_isAdmin)
+          _NavEntry(Icons.location_on_rounded, Icons.location_on_outlined, 'Family'),
+        _NavEntry(Icons.devices_rounded, Icons.devices_outlined, 'Devices'),
+      ];
 
   @override
   Widget build(BuildContext context) {
+    if (!_roleLoaded) {
+      return const Scaffold(
+        backgroundColor: Colors.white,
+        body: Center(child: CircularProgressIndicator()),
+      );
+    }
+
+    final entries = _navEntries;
+
     return Scaffold(
       backgroundColor: AppColors.lightBg,
       body: Column(
         children: [
-          // ── Global offline banner (visible on all tabs) ─────────────────
           _buildConnectivityBanner(),
-          // ── Tab content ─────────────────────────────────────────────────
           Expanded(
             child: IndexedStack(
               index: _selectedIndex,
-              children: [
-                const HomeDashboardScreen(),
-                const ActivityScreen(),
-                const MessagesScreen(),
-                FamilyMapScreen(isActive: _selectedIndex == 3),
-                const DevicesScreen(),
-              ],
+              children: _screens,
             ),
           ),
         ],
@@ -61,13 +96,10 @@ class _MainNavScreenState extends State<MainNavScreen> {
             padding: const EdgeInsets.symmetric(vertical: 8),
             child: Row(
               mainAxisAlignment: MainAxisAlignment.spaceAround,
-              children: [
-                _buildNavItem(0, Icons.home_rounded, Icons.home_outlined, 'Home'),
-                _buildNavItem(1, Icons.show_chart_rounded, Icons.show_chart_outlined, 'Achieve'),
-                _buildNavItem(2, Icons.people_rounded, Icons.people_outlined, 'Share'),
-                _buildNavItem(3, Icons.location_on_rounded, Icons.location_on_outlined, 'Family'),
-                _buildNavItem(4, Icons.devices_rounded, Icons.devices_outlined, 'Devices'),
-              ],
+              children: List.generate(
+                entries.length,
+                (i) => _buildNavItem(i, entries[i]),
+              ),
             ),
           ),
         ),
@@ -80,9 +112,7 @@ class _MainNavScreenState extends State<MainNavScreen> {
   Widget _buildConnectivityBanner() {
     return Consumer<ConnectivityService>(
       builder: (context, conn, _) {
-        // Only show the banner when offline
         if (conn.isOnline) return const SizedBox.shrink();
-
         return Material(
           color: const Color(0xFFB71C1C),
           child: SafeArea(
@@ -114,16 +144,14 @@ class _MainNavScreenState extends State<MainNavScreen> {
     );
   }
 
-  // ── Bottom nav ────────────────────────────────────────────────────────────
+  // ── Bottom nav item ───────────────────────────────────────────────────────
 
-  Widget _buildNavItem(int index, IconData activeIcon, IconData inactiveIcon, String label) {
+  Widget _buildNavItem(int index, _NavEntry entry) {
     final isSelected = _selectedIndex == index;
-    final activeColor = index == 1 || index == 2 || index == 3
-        ? AppColors.primary
-        : Colors.black;
-    final inactiveColor = AppColors.textLight;
+    // Share tab (index 2) always gets the circle treatment
+    const shareIndex = 2;
 
-    if (index == 2 && isSelected) {
+    if (index == shareIndex && isSelected) {
       return GestureDetector(
         onTap: () => setState(() => _selectedIndex = index),
         child: Column(
@@ -136,12 +164,21 @@ class _MainNavScreenState extends State<MainNavScreen> {
                 color: AppColors.primary,
                 shape: BoxShape.circle,
               ),
-              child: Icon(activeIcon, color: Colors.white, size: 24),
+              child: Icon(entry.activeIcon, color: Colors.white, size: 24),
             ),
           ],
         ),
       );
     }
+
+    // Achieve tab (index 1) gets the pill treatment when selected
+    const achieveIndex = 1;
+    final activeColor = (index == achieveIndex ||
+            index == shareIndex ||
+            (entry.label == 'Family'))
+        ? AppColors.primary
+        : Colors.black;
+    final inactiveColor = AppColors.textLight;
 
     return GestureDetector(
       onTap: () => setState(() => _selectedIndex = index),
@@ -151,9 +188,10 @@ class _MainNavScreenState extends State<MainNavScreen> {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            if (isSelected && index == 1)
+            if (isSelected && index == achieveIndex)
               Container(
-                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
                 decoration: BoxDecoration(
                   color: AppColors.primary,
                   borderRadius: BorderRadius.circular(20),
@@ -161,10 +199,10 @@ class _MainNavScreenState extends State<MainNavScreen> {
                 child: Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    Icon(activeIcon, color: Colors.white, size: 20),
+                    Icon(entry.activeIcon, color: Colors.white, size: 20),
                     const SizedBox(width: 6),
                     Text(
-                      label,
+                      entry.label,
                       style: GoogleFonts.inter(
                         fontSize: 13,
                         fontWeight: FontWeight.w600,
@@ -176,13 +214,13 @@ class _MainNavScreenState extends State<MainNavScreen> {
               )
             else ...[
               Icon(
-                isSelected ? activeIcon : inactiveIcon,
+                isSelected ? entry.activeIcon : entry.inactiveIcon,
                 color: isSelected ? activeColor : inactiveColor,
                 size: 24,
               ),
               const SizedBox(height: 2),
               Text(
-                label,
+                entry.label,
                 style: GoogleFonts.inter(
                   fontSize: 11,
                   color: isSelected ? activeColor : inactiveColor,
@@ -196,4 +234,11 @@ class _MainNavScreenState extends State<MainNavScreen> {
       ),
     );
   }
+}
+
+class _NavEntry {
+  final IconData activeIcon;
+  final IconData inactiveIcon;
+  final String label;
+  const _NavEntry(this.activeIcon, this.inactiveIcon, this.label);
 }

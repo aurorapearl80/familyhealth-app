@@ -21,8 +21,8 @@ class LoginScreen extends StatefulWidget {
 }
 
 class _LoginScreenState extends State<LoginScreen> {
-  final _emailController = TextEditingController(text: 'ezra.mohr4@example.com');
-  final _passwordController = TextEditingController(text: 'password123');
+  final _emailController = TextEditingController(text: 'admin.primary@patient-monitor.com');
+  final _passwordController = TextEditingController(text: 'Patient@2026');
   bool _obscurePassword = true;
   bool _isLoading = false;
   String? _errorMessage;
@@ -51,17 +51,24 @@ class _LoginScreenState extends State<LoginScreen> {
         }),
       );
 
+      debugPrint('[Login] status=${response.statusCode} body=${response.body}');
+
       final data = jsonDecode(response.body) as Map<String, dynamic>;
 
-      if (response.statusCode == 200 && data['token'] != null) {
+      // Support both 'token' and 'access_token' keys
+      final rawToken = data['token'] ?? data['access_token'];
+
+      if (response.statusCode == 200 && rawToken != null) {
         // Serial is returned at the top-level of the login response (nullable)
         final serial = data['serial'] as String?;
-        // User ID is returned as 'id' in the login response
+        // User ID and role from the login response
         final userId = data['id']?.toString();
+        final roleType = data['roleType'] as String? ?? '';
 
-        await AuthService.saveToken(data['token'] as String);
+        await AuthService.saveToken(rawToken as String);
         await AuthService.saveSerial(serial);
         if (userId != null) await AuthService.saveUserId(userId);
+        await AuthService.saveRoleType(roleType);
         if (!mounted) return;
 
         // ── POST-LOGIN: user ID → OneSignal → location ────────────────────
@@ -80,9 +87,10 @@ class _LoginScreenState extends State<LoginScreen> {
           _isLoading = false;
         });
       }
-    } catch (_) {
+    } catch (e) {
+      debugPrint('[Login] exception: $e');
       setState(() {
-        _errorMessage = 'Network error. Please check your connection.';
+        _errorMessage = 'Network error: $e';
         _isLoading = false;
       });
     }

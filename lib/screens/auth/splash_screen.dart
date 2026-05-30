@@ -47,10 +47,9 @@ class _SplashScreenState extends State<SplashScreen>
     debugPrint('[Splash] token=${token != null ? 'present' : 'null'} serial=$serial');
     if (!mounted) return;
 
-    // If token exists AND serial is present → go straight to dashboard + fetch
-    // If token exists but serial is null → route to login so serial can be captured
+    // If token exists → go straight to dashboard
     // If no token → route to login
-    final goHome = token != null && serial != null;
+    final goHome = token != null;
 
     if (goHome) {
       context.read<BleSummaryService>().fetch();
