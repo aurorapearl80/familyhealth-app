@@ -4,7 +4,9 @@
 
 list(APPEND FLUTTER_PLUGIN_LIST
   connectivity_plus
+  flutter_webrtc
   geolocator_windows
+  livekit_client
   permission_handler_windows
 )
 
