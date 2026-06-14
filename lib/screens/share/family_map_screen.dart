@@ -2,12 +2,9 @@ import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
 import '../../theme/app_colors.dart';
-import '../../widgets/lottie_background.dart';
 
 class FamilyMapScreen extends StatefulWidget {
-  final bool isActive;
-
-  const FamilyMapScreen({super.key, this.isActive = true});
+  const FamilyMapScreen({super.key});
 
   @override
   State<FamilyMapScreen> createState() => _FamilyMapScreenState();
@@ -60,7 +57,7 @@ class _FamilyMapScreenState extends State<FamilyMapScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: AppColors.lightBg,
-      body: LottieBackground(child: SafeArea(
+      body: SafeArea(
         child: Stack(
           children: [
             Column(
@@ -69,27 +66,15 @@ class _FamilyMapScreenState extends State<FamilyMapScreen> {
                 Expanded(
                   child: Stack(
                     children: [
-                      widget.isActive
-                          ? GoogleMap(
-                              key: const ValueKey('family_google_map'),
-                              initialCameraPosition: _initialCamera,
-                              markers: _markers,
-                              circles: _circles,
-                              myLocationButtonEnabled: false,
-                              zoomControlsEnabled: false,
-                              mapToolbarEnabled: false,
-                              onMapCreated: (c) => _mapController = c,
-                            )
-                          : ColoredBox(
-                              color: AppColors.lightBg,
-                              child: Center(
-                                child: Icon(
-                                  Icons.map_outlined,
-                                  size: 48,
-                                  color: AppColors.textLight.withOpacity(0.5),
-                                ),
-                              ),
-                            ),
+                      GoogleMap(
+                        initialCameraPosition: _initialCamera,
+                        markers: _markers,
+                        circles: _circles,
+                        myLocationButtonEnabled: false,
+                        zoomControlsEnabled: false,
+                        mapToolbarEnabled: false,
+                        onMapCreated: (c) => _mapController = c,
+                      ),
                       // Layer toggle
                       Positioned(
                         top: 16,
@@ -110,7 +95,7 @@ class _FamilyMapScreenState extends State<FamilyMapScreen> {
             ),
           ],
         ),
-      )),
+      ),
     );
   }
 

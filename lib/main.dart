@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:google_maps_flutter_android/google_maps_flutter_android.dart';
+import 'package:google_maps_flutter_platform_interface/google_maps_flutter_platform_interface.dart';
 import 'package:provider/provider.dart';
 import 'package:workmanager/workmanager.dart';
 
@@ -15,6 +17,15 @@ import 'theme/app_theme.dart';
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   SystemChrome.setPreferredOrientations([DeviceOrientation.portraitUp]);
+
+  // Use Hybrid Composition so Google Maps embeds at the Android OS layer
+  // instead of going through Flutter's SurfaceProducer capture pipeline,
+  // which abandons its ImageReader on background/foreground cycles.
+  final mapsImpl = GoogleMapsFlutterPlatform.instance;
+  if (mapsImpl is GoogleMapsFlutterAndroid) {
+    mapsImpl.useAndroidViewSurface = true;
+    await mapsImpl.initializeWithRenderer(AndroidMapRenderer.latest);
+  }
 
   // ── OneSignal: initialize early (before runApp) ──────────────────────────
   OneSignalService.initialize();

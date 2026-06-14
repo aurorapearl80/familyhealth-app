@@ -46,7 +46,7 @@ class _MainNavScreenState extends State<MainNavScreen> {
         const HomeDashboardScreen(),
         const ActivityScreen(),
         const MessagesScreen(),
-        if (_isAdmin) FamilyMapScreen(isActive: _selectedIndex == 3),
+        if (_isAdmin) const FamilyMapScreen(),
         const DevicesScreen(),
       ];
 
