@@ -26,6 +26,7 @@ class BloodPressureScreen extends StatefulWidget {
 class _BloodPressureScreenState extends State<BloodPressureScreen> {
   _UploadState _uploadState = _UploadState.idle;
   DateTime? _lastProcessedAt;
+  BleScanService? _ble;
 
   static const _deviceId = '66437be266c8833a1c42d7aa';
   static const _timezone = 'Asia/Manila';
@@ -36,13 +37,15 @@ class _BloodPressureScreenState extends State<BloodPressureScreen> {
   void initState() {
     super.initState();
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      context.read<BleScanService>().addListener(_onBleChanged);
+      if (!mounted) return;
+      _ble = context.read<BleScanService>();
+      _ble!.addListener(_onBleChanged);
     });
   }
 
   @override
   void dispose() {
-    context.read<BleScanService>().removeListener(_onBleChanged);
+    _ble?.removeListener(_onBleChanged);
     super.dispose();
   }
 
@@ -283,6 +286,8 @@ class _BloodPressureScreenState extends State<BloodPressureScreen> {
                               children: [
                                 _buildHeroCard(
                                   isConnected: isConnected,
+                                  isScanning: ble.isScanning,
+                                  isConnecting: ble.isConnecting,
                                   systolicDisplay: systolicDisplay,
                                   diastolicDisplay: diastolicDisplay,
                                   bpmDisplay: bpmDisplay,
@@ -344,7 +349,7 @@ class _BloodPressureScreenState extends State<BloodPressureScreen> {
                     bottom: 20,
                     left: 0,
                     right: 0,
-                    child: Center(child: _buildNewReadingFab()),
+                    child: Center(child: _buildNewReadingFab(ble)),
                   ),
                 ],
               );
@@ -359,6 +364,8 @@ class _BloodPressureScreenState extends State<BloodPressureScreen> {
 
   Widget _buildHeroCard({
     required bool isConnected,
+    required bool isScanning,
+    required bool isConnecting,
     required String systolicDisplay,
     required String diastolicDisplay,
     required String bpmDisplay,
@@ -391,16 +398,34 @@ class _BloodPressureScreenState extends State<BloodPressureScreen> {
                     width: 8,
                     height: 8,
                     decoration: BoxDecoration(
-                      color: isConnected ? Colors.greenAccent : Colors.white38,
+                      color: isConnected
+                          ? Colors.greenAccent
+                          : isConnecting
+                              ? Colors.orangeAccent
+                              : isScanning
+                                  ? Colors.yellowAccent
+                                  : Colors.white38,
                       shape: BoxShape.circle,
                     ),
                   ),
                   const SizedBox(width: 6),
                   Text(
-                    isConnected ? 'Live' : 'No device',
+                    isConnected
+                        ? 'Live'
+                        : isConnecting
+                            ? 'Connecting…'
+                            : isScanning
+                                ? 'Scanning…'
+                                : 'No device',
                     style: GoogleFonts.inter(
                       fontSize: 12,
-                      color: isConnected ? Colors.greenAccent : Colors.white54,
+                      color: isConnected
+                          ? Colors.greenAccent
+                          : isConnecting
+                              ? Colors.orangeAccent
+                              : isScanning
+                                  ? Colors.yellowAccent
+                                  : Colors.white54,
                       fontWeight: FontWeight.w600,
                     ),
                   ),
@@ -634,28 +659,42 @@ class _BloodPressureScreenState extends State<BloodPressureScreen> {
     );
   }
 
-  Widget _buildNewReadingFab() {
-    return Container(
-      height: 52,
-      padding: const EdgeInsets.symmetric(horizontal: 28),
-      decoration: BoxDecoration(
-        color: Colors.black,
-        borderRadius: BorderRadius.circular(30),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          const Icon(Icons.add, color: Colors.white, size: 20),
-          const SizedBox(width: 8),
-          Text(
-            'New Reading',
-            style: GoogleFonts.inter(
-              fontSize: 15,
-              fontWeight: FontWeight.w600,
-              color: Colors.white,
+  Widget _buildNewReadingFab(BleScanService ble) {
+    final bool busy = ble.isScanning || ble.isConnecting;
+    return GestureDetector(
+      onTap: busy ? null : () => context.read<BleScanService>().triggerScan(),
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 250),
+        height: 52,
+        padding: const EdgeInsets.symmetric(horizontal: 28),
+        decoration: BoxDecoration(
+          color: busy ? Colors.grey.shade700 : Colors.black,
+          borderRadius: BorderRadius.circular(30),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            if (busy)
+              const SizedBox(
+                width: 18,
+                height: 18,
+                child: CircularProgressIndicator(
+                    strokeWidth: 2, color: Colors.white),
+              )
+            else
+              const Icon(Icons.bluetooth_searching,
+                  color: Colors.white, size: 20),
+            const SizedBox(width: 8),
+            Text(
+              busy ? 'Scanning…' : 'New Reading',
+              style: GoogleFonts.inter(
+                fontSize: 15,
+                fontWeight: FontWeight.w600,
+                color: Colors.white,
+              ),
             ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }

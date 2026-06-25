@@ -23,6 +23,7 @@ class BleScanService extends ChangeNotifier {
   final Map<String, BleDeviceInfo> _registeredByDeviceId = {};
   bool _isScanning = false;
   bool _isConnecting = false;
+  bool _wasEverConnected = false;
   String? _connectingName;
   String? _connectingAddress;
   int _connectRetry = 0;
@@ -57,6 +58,7 @@ class BleScanService extends ChangeNotifier {
         return live ?? BleDeviceInfo.fromRegistered(registered);
       }).toList();
   bool get isScanning => _isScanning;
+  bool get isConnecting => _isConnecting;
   String get status => _status;
   bool _initialized = false;
 
@@ -242,9 +244,11 @@ class BleScanService extends ChangeNotifier {
 
     try {
       await _connectionSub?.cancel();
+      _wasEverConnected = false;
       _connectionSub = device.connectionState.listen((state) async {
         _log('Connection state for "$name": $state');
         if (state == BluetoothConnectionState.connected) {
+          _wasEverConnected = true;
           _connectTimeoutTimer?.cancel();
           _connectRetry = 0;
           _connectedDevice = device;
@@ -254,8 +258,12 @@ class BleScanService extends ChangeNotifier {
           notifyListeners();
           await _setupNotifications(device, name);
         } else if (state == BluetoothConnectionState.disconnected) {
-          _log('Disconnected from "$name"');
-          _handleDisconnect(name, device.remoteId.str);
+          _log('Disconnected from "$name" (wasConnected=$_wasEverConnected)');
+          // Only treat as a clean disconnect if we had reached connected state.
+          // If connect() hasn't returned yet, let _handleConnectFailure handle it.
+          if (_wasEverConnected) {
+            _handleDisconnect(name, device.remoteId.str);
+          }
         }
       });
 
@@ -360,8 +368,34 @@ class BleScanService extends ChangeNotifier {
     }
 
     if (deviceName.contains('JPD') && !deviceName.contains('Scale')) {
-      _log('BP raw len=${data.length}: ${_hex(data)}');
+      if (data.length == 7) {
+        // Progress packet during cuff inflation: fd fd fb 00 PP 0d 0a — skip silently
+        if (data[0] == 0xfd && data[1] == 0xfd && data[2] == 0xfb) return;
+        // Any other 7-byte packet is the final result: fd fd f4 SYS DIA PUL 0d 0a
+        final sys = data[3] & 0xff;
+        final dia = data[4] & 0xff;
+        final pul = data[5] & 0xff;
+        _log('BP 7-byte result: ${_hex(data)} → sys=$sys dia=$dia pulse=$pul');
+        if (sys > 0 && dia > 0 && pul > 0) {
+          _log('BP parsed: $sys/$dia pulse=$pul');
+          _applyReading(
+            kind: BleReadingKind.bloodPressure,
+            deviceName: deviceName,
+            status: 'BP: $sys/$dia ($pul bpm)',
+            update: (r) => r.copyWith(
+              systolic: sys,
+              diastolic: dia,
+              pulseRate: pul,
+              heartRate: pul,
+            ),
+          );
+        } else {
+          _log('BP 7-byte result: invalid values, ignoring');
+        }
+        return;
+      }
       if (data.length == 8) {
+        _log('BP raw len=8: ${_hex(data)}');
         final reading = BleParsers.parseBloodPressure(data);
         if (reading != null && !reading.isPartial && reading.systolic > 0) {
           _log('BP parsed: ${reading.systolic}/${reading.diastolic} pulse=${reading.pulseRate}');
@@ -380,9 +414,9 @@ class BleScanService extends ChangeNotifier {
         } else {
           _log('BP parse: partial=${reading?.isPartial} systolic=${reading?.systolic}');
         }
-      } else {
-        _log('BP skipped — expected 8 bytes, got ${data.length}');
+        return;
       }
+      _log('BP unexpected len=${data.length}: ${_hex(data)}');
       return;
     }
 
@@ -537,6 +571,7 @@ class BleScanService extends ChangeNotifier {
   void _resetConnectionState() {
     _connectTimeoutTimer?.cancel();
     _isConnecting = false;
+    _wasEverConnected = false;
     _connectingName = null;
     _connectingAddress = null;
     _connectRetry = 0;
@@ -593,6 +628,14 @@ class BleScanService extends ChangeNotifier {
       return serviceData.values.expand((e) => e).toList();
     }
     return null;
+  }
+
+  /// Restart a fresh scan cycle from the UI (e.g., "New Reading" button).
+  void triggerScan() {
+    if (_isConnecting) return;
+    _scanWindowTimer?.cancel();
+    _loggedThisCycle.clear();
+    _stopScan().then((_) => _startScanCycle());
   }
 
   Future<void> disposeService() async {

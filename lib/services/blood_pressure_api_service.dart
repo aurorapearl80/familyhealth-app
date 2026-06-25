@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import 'auth_service.dart';
 
@@ -21,6 +22,16 @@ class BloodPressureApiService {
     final token = await AuthService.getToken();
     if (token == null) return false;
 
+    final payload = {
+      'measured_at': measuredAt,
+      'systolic': systolic,
+      'diastolic': diastolic,
+      'device_id': deviceId,
+      'bpm': bpm,
+      'timezone': timezone,
+    };
+    debugPrint('[BP-API] POST $_endpoint payload=${jsonEncode(payload)}');
+
     try {
       final response = await http
           .post(
@@ -30,19 +41,14 @@ class BloodPressureApiService {
               'Content-Type': 'application/json',
               'Authorization': 'Bearer $token',
             },
-            body: jsonEncode({
-              'measured_at': measuredAt,
-              'systolic': systolic,
-              'diastolic': diastolic,
-              'device_id': deviceId,
-              'bpm': bpm,
-              'timezone': timezone,
-            }),
+            body: jsonEncode(payload),
           )
           .timeout(const Duration(seconds: 15));
 
+      debugPrint('[BP-API] response ${response.statusCode}: ${response.body}');
       return response.statusCode >= 200 && response.statusCode < 300;
-    } catch (_) {
+    } catch (e) {
+      debugPrint('[BP-API] error: $e');
       return false;
     }
   }
