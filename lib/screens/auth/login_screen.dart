@@ -64,11 +64,14 @@ class _LoginScreenState extends State<LoginScreen> {
         // User ID and role from the login response
         final userId = data['id']?.toString();
         final roleType = data['roleType'] as String? ?? '';
+        // The admin who manages this patient — needed to address them in chat. Null for non-patients.
+        final addedByUserId = data['added_by_user_id'] as int?;
 
         await AuthService.saveToken(rawToken as String);
         await AuthService.saveSerial(serial);
         if (userId != null) await AuthService.saveUserId(userId);
         await AuthService.saveRoleType(roleType);
+        await AuthService.saveAddedByUserId(addedByUserId);
         if (!mounted) return;
 
         // ── POST-LOGIN: user ID → OneSignal → location ────────────────────

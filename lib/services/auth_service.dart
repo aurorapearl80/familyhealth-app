@@ -51,6 +51,7 @@ class AuthService {
     await prefs.remove(_serialKey);
     await prefs.remove(_userIdKey);
     await prefs.remove(_roleKey);
+    await prefs.remove(_addedByUserIdKey);
   }
 
   // ── Role ───────────────────────────────────────────────────────────────────
@@ -79,6 +80,26 @@ class AuthService {
   static Future<String?> getUserId() async {
     final prefs = await SharedPreferences.getInstance();
     return prefs.getString(_userIdKey);
+  }
+
+  // ── Added-by admin (patient accounts only) ─────────────────────────────────
+
+  /// The admin `user_id` that manages this patient — needed to address them
+  /// as the `to` in a `private_message` socket emit. Null for non-patients.
+  static const _addedByUserIdKey = 'added_by_user_id';
+
+  static Future<void> saveAddedByUserId(int? userId) async {
+    final prefs = await SharedPreferences.getInstance();
+    if (userId == null) {
+      await prefs.remove(_addedByUserIdKey);
+      return;
+    }
+    await prefs.setInt(_addedByUserIdKey, userId);
+  }
+
+  static Future<int?> getAddedByUserId() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getInt(_addedByUserIdKey);
   }
 
   // ── Serial ─────────────────────────────────────────────────────────────────

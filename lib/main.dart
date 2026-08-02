@@ -8,6 +8,7 @@ import 'package:workmanager/workmanager.dart';
 import 'screens/auth/splash_screen.dart';
 import 'services/ble_scan_service.dart';
 import 'services/ble_summary_service.dart';
+import 'services/chat_service.dart';
 import 'services/connectivity_service.dart';
 import 'services/location_service.dart';
 import 'services/onesignal_service.dart';
@@ -51,6 +52,7 @@ class FamilyHealthApp extends StatelessWidget {
         ChangeNotifierProvider(create: (_) => BleSummaryService()),
         ChangeNotifierProvider(create: (_) => PatientService()),
         ChangeNotifierProvider(create: (_) => LocationService()),
+        ChangeNotifierProvider(create: (_) => ChatService()),
       ],
       child: MaterialApp(
         title: 'Family Watch Today',
