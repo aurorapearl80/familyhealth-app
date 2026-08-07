@@ -54,12 +54,22 @@ class SocketService {
     _socket?.emit('private_message', {'to': to, 'message': message});
   }
 
-  void emitTyping({required int patientId, required int senderId}) {
-    _socket?.emit('isTyping', {'patient_id': patientId, 'sender_id': senderId});
+  /// Pass [patientId] for a 1:1 thread or [channelId] for a group thread —
+  /// exactly one should be set, matching whichever thread is open.
+  void emitTyping({int? patientId, int? channelId, required int senderId}) {
+    _socket?.emit('isTyping', {
+      if (patientId != null) 'patient_id': patientId,
+      if (channelId != null) 'channel_id': channelId,
+      'sender_id': senderId,
+    });
   }
 
-  void emitStopTyping({required int patientId, required int senderId}) {
-    _socket?.emit('stopTyping', {'patient_id': patientId, 'sender_id': senderId});
+  void emitStopTyping({int? patientId, int? channelId, required int senderId}) {
+    _socket?.emit('stopTyping', {
+      if (patientId != null) 'patient_id': patientId,
+      if (channelId != null) 'channel_id': channelId,
+      'sender_id': senderId,
+    });
   }
 
   void dispose() {

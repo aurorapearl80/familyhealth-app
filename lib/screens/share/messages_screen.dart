@@ -8,6 +8,7 @@ import '../../theme/app_colors.dart';
 import 'family_map_screen.dart';
 import 'chat_screen.dart';
 import '../../widgets/lottie_background.dart';
+import '../../widgets/profile_avatar.dart';
 
 class MessagesScreen extends StatefulWidget {
   const MessagesScreen({super.key});
@@ -33,9 +34,31 @@ class _MessagesScreenState extends State<MessagesScreen> {
       _isAdmin = role == 'admin';
       _roleLoaded = true;
     });
-    if (_isAdmin) {
-      await context.read<ChatService>().fetchConversations();
-    }
+    final chat = context.read<ChatService>();
+    await Future.wait([
+      if (_isAdmin) chat.fetchConversations(),
+      chat.fetchChannels(),
+    ]);
+  }
+
+  Future<void> _refresh() async {
+    final chat = context.read<ChatService>();
+    await Future.wait([
+      if (_isAdmin) chat.fetchConversations(),
+      chat.fetchChannels(),
+    ]);
+  }
+
+  void _openCreateGroup(List<Conversation> patients) {
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.white,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (_) => _CreateGroupSheet(patients: patients),
+    );
   }
 
   @override
@@ -56,8 +79,9 @@ class _MessagesScreenState extends State<MessagesScreen> {
       ),
       floatingActionButton: _isAdmin
           ? FloatingActionButton(
-              onPressed: () {},
+              onPressed: () => _openCreateGroup(context.read<ChatService>().conversations),
               backgroundColor: AppColors.primary,
+              tooltip: 'New group chat',
               child: const Icon(Icons.group_add, color: Colors.white),
             )
           : null,
@@ -68,73 +92,157 @@ class _MessagesScreenState extends State<MessagesScreen> {
     if (!_roleLoaded) {
       return const Center(child: CircularProgressIndicator());
     }
-    if (!_isAdmin) {
-      return _buildPatientThreadEntry(context);
-    }
     return Consumer<ChatService>(
       builder: (context, chat, _) {
-        if (chat.isLoadingConversations && chat.conversations.isEmpty) {
-          return const Center(child: CircularProgressIndicator());
-        }
-        if (chat.error != null && chat.conversations.isEmpty) {
-          return _buildMessage(chat.error!, onRetry: chat.fetchConversations);
-        }
-        if (chat.conversations.isEmpty) {
-          return _buildMessage('No conversations yet');
-        }
         return RefreshIndicator(
-          onRefresh: chat.fetchConversations,
-          child: _buildConversationList(context, chat.conversations),
+          onRefresh: _refresh,
+          child: ListView(
+            padding: const EdgeInsets.symmetric(horizontal: 16),
+            children: [
+              _sectionHeader('Direct Messages'),
+              if (_isAdmin)
+                ..._buildDirectSection(context, chat)
+              else
+                _buildConvoTile(
+                  context: context,
+                  name: 'Care Team',
+                  time: '',
+                  preview: 'Tap to message your care team',
+                  unread: false,
+                  color: AppColors.primary,
+                  onTap: () => Navigator.of(context).push(
+                    MaterialPageRoute(
+                      builder: (_) => const ChatScreen(
+                        contactName: 'Care Team',
+                        contactColor: AppColors.primary,
+                        isAdmin: false,
+                      ),
+                    ),
+                  ),
+                ),
+              const SizedBox(height: 20),
+              _sectionHeader('Group Chats'),
+              ..._buildGroupSection(context, chat),
+              const SizedBox(height: 24),
+            ],
+          ),
         );
       },
     );
   }
 
-  Widget _buildMessage(String text, {Future<void> Function()? onRetry}) {
-    return ListView(
-      children: [
-        Padding(
-          padding: const EdgeInsets.symmetric(vertical: 48, horizontal: 24),
-          child: Column(
-            children: [
-              Text(
-                text,
-                textAlign: TextAlign.center,
-                style: GoogleFonts.inter(fontSize: 14, color: AppColors.textMedium),
-              ),
-              if (onRetry != null) ...[
-                const SizedBox(height: 12),
-                TextButton(onPressed: onRetry, child: const Text('Retry')),
-              ],
-            ],
-          ),
-        ),
-      ],
-    );
-  }
-
-  Widget _buildPatientThreadEntry(BuildContext context) {
-    return ListView(
-      padding: const EdgeInsets.symmetric(horizontal: 16),
-      children: [
-        _buildConvoTile(
-          context: context,
-          name: 'Care Team',
-          time: '',
-          preview: 'Tap to message your care team',
-          unread: false,
-          color: AppColors.primary,
-          onTap: () => Navigator.of(context).push(
-            MaterialPageRoute(
-              builder: (_) => const ChatScreen(
-                contactName: 'Care Team',
-                contactColor: AppColors.primary,
-                isAdmin: false,
-              ),
+  List<Widget> _buildDirectSection(BuildContext context, ChatService chat) {
+    if (chat.isLoadingConversations && chat.conversations.isEmpty) {
+      return const [Padding(padding: EdgeInsets.symmetric(vertical: 20), child: Center(child: CircularProgressIndicator()))];
+    }
+    if (chat.error != null && chat.conversations.isEmpty) {
+      return [_inlineMessage(chat.error!, onRetry: chat.fetchConversations)];
+    }
+    if (chat.conversations.isEmpty) {
+      return [_inlineMessage('No conversations yet')];
+    }
+    return List.generate(chat.conversations.length, (i) {
+      final c = chat.conversations[i];
+      final last = c.lastMessage;
+      final preview = last == null
+          ? 'No messages yet'
+          : (last.body?.isNotEmpty == true
+              ? last.body!
+              : (last.hasAttachment ? '📎 ${last.attachmentName ?? 'Attachment'}' : ''));
+      return _buildConvoTile(
+        context: context,
+        name: c.fullName,
+        time: last != null ? _timeAgo(last.createdAt) : '',
+        preview: preview,
+        unread: c.unreadCount > 0,
+        color: _avatarColor(i),
+        imageUrl: c.profileImageUrl,
+        onTap: () => Navigator.of(context).push(
+          MaterialPageRoute(
+            builder: (_) => ChatScreen(
+              contactName: c.fullName,
+              contactColor: _avatarColor(i),
+              contactImageUrl: c.profileImageUrl,
+              patientId: c.patientId,
+              recipientUserId: c.recipientUserId,
+              isAdmin: true,
             ),
           ),
         ),
-      ],
+      );
+    });
+  }
+
+  List<Widget> _buildGroupSection(BuildContext context, ChatService chat) {
+    if (chat.isLoadingChannels && chat.channels.isEmpty) {
+      return const [Padding(padding: EdgeInsets.symmetric(vertical: 20), child: Center(child: CircularProgressIndicator()))];
+    }
+    if (chat.channelError != null && chat.channels.isEmpty) {
+      return [_inlineMessage(chat.channelError!, onRetry: chat.fetchChannels)];
+    }
+    if (chat.channels.isEmpty) {
+      return [_inlineMessage('No group chats yet')];
+    }
+    return List.generate(chat.channels.length, (i) {
+      final ch = chat.channels[i];
+      final last = ch.lastMessage;
+      final preview = last == null
+          ? '${ch.participants.length} participants'
+          : (last.body?.isNotEmpty == true
+              ? last.body!
+              : (last.hasAttachment ? '📎 ${last.attachmentName ?? 'Attachment'}' : ''));
+      return _buildConvoTile(
+        context: context,
+        name: ch.name,
+        time: last != null ? _timeAgo(last.createdAt) : '',
+        preview: preview,
+        unread: ch.unreadCount > 0,
+        color: _avatarColor(i),
+        isGroup: true,
+        onTap: () => Navigator.of(context).push(
+          MaterialPageRoute(
+            builder: (_) => ChatScreen(
+              contactName: ch.name,
+              contactColor: _avatarColor(i),
+              channelId: ch.channelId,
+              isAdmin: _isAdmin,
+            ),
+          ),
+        ),
+      );
+    });
+  }
+
+  Widget _sectionHeader(String title) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(0, 4, 0, 8),
+      child: Text(
+        title,
+        style: GoogleFonts.inter(
+          fontSize: 16,
+          fontWeight: FontWeight.w700,
+          color: AppColors.textDark,
+        ),
+      ),
+    );
+  }
+
+  Widget _inlineMessage(String text, {Future<void> Function()? onRetry}) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 16),
+      child: Column(
+        children: [
+          Text(
+            text,
+            textAlign: TextAlign.center,
+            style: GoogleFonts.inter(fontSize: 14, color: AppColors.textMedium),
+          ),
+          if (onRetry != null) ...[
+            const SizedBox(height: 8),
+            TextButton(onPressed: onRetry, child: const Text('Retry')),
+          ],
+        ],
+      ),
     );
   }
 
@@ -291,60 +399,6 @@ class _MessagesScreenState extends State<MessagesScreen> {
     return '${dt.month}/${dt.day}/${dt.year}';
   }
 
-  Widget _buildConversationList(BuildContext context, List<Conversation> conversations) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Padding(
-          padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
-          child: Text(
-            'Recent Conversations',
-            style: GoogleFonts.inter(
-              fontSize: 16,
-              fontWeight: FontWeight.w700,
-              color: AppColors.textDark,
-            ),
-          ),
-        ),
-        Expanded(
-          child: ListView.separated(
-            padding: const EdgeInsets.symmetric(horizontal: 16),
-            itemCount: conversations.length,
-            separatorBuilder: (_, __) => const Divider(height: 1, color: Color(0xFFF0F0F5)),
-            itemBuilder: (context, i) {
-              final c = conversations[i];
-              final last = c.lastMessage;
-              final preview = last == null
-                  ? 'No messages yet'
-                  : (last.body?.isNotEmpty == true
-                      ? last.body!
-                      : (last.hasAttachment ? '📎 ${last.attachmentName ?? 'Attachment'}' : ''));
-              return _buildConvoTile(
-                context: context,
-                name: c.fullName,
-                time: last != null ? _timeAgo(last.createdAt) : '',
-                preview: preview,
-                unread: c.unreadCount > 0,
-                color: _avatarColor(i),
-                onTap: () => Navigator.of(context).push(
-                  MaterialPageRoute(
-                    builder: (_) => ChatScreen(
-                      contactName: c.fullName,
-                      contactColor: _avatarColor(i),
-                      patientId: c.patientId,
-                      recipientUserId: c.recipientUserId,
-                      isAdmin: true,
-                    ),
-                  ),
-                ),
-              );
-            },
-          ),
-        ),
-      ],
-    );
-  }
-
   Widget _buildConvoTile({
     required BuildContext context,
     required String name,
@@ -353,6 +407,8 @@ class _MessagesScreenState extends State<MessagesScreen> {
     required bool unread,
     required Color color,
     required VoidCallback onTap,
+    bool isGroup = false,
+    String? imageUrl,
   }) {
     return InkWell(
       onTap: onTap,
@@ -361,17 +417,12 @@ class _MessagesScreenState extends State<MessagesScreen> {
         padding: const EdgeInsets.symmetric(vertical: 12),
         child: Row(
           children: [
-            CircleAvatar(
+            ProfileAvatar.buildAvatar(
+              imageUrl: isGroup ? null : imageUrl,
+              initials: name.isNotEmpty ? name[0] : '?',
               radius: 24,
               backgroundColor: color,
-              child: Text(
-                name.isNotEmpty ? name[0] : '?',
-                style: const TextStyle(
-                  color: Colors.white,
-                  fontWeight: FontWeight.bold,
-                  fontSize: 18,
-                ),
-              ),
+              icon: isGroup ? Icons.groups : null,
             ),
             const SizedBox(width: 12),
             Expanded(
@@ -381,12 +432,15 @@ class _MessagesScreenState extends State<MessagesScreen> {
                   Row(
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
-                      Text(
-                        name,
-                        style: GoogleFonts.inter(
-                          fontSize: 14,
-                          fontWeight: FontWeight.w600,
-                          color: AppColors.textDark,
+                      Expanded(
+                        child: Text(
+                          name,
+                          overflow: TextOverflow.ellipsis,
+                          style: GoogleFonts.inter(
+                            fontSize: 14,
+                            fontWeight: FontWeight.w600,
+                            color: AppColors.textDark,
+                          ),
                         ),
                       ),
                       Text(
@@ -427,6 +481,152 @@ class _MessagesScreenState extends State<MessagesScreen> {
             ),
           ],
         ),
+      ),
+    );
+  }
+}
+
+/// Bottom sheet for an admin to create a group chat from their own patients.
+class _CreateGroupSheet extends StatefulWidget {
+  final List<Conversation> patients;
+
+  const _CreateGroupSheet({required this.patients});
+
+  @override
+  State<_CreateGroupSheet> createState() => _CreateGroupSheetState();
+}
+
+class _CreateGroupSheetState extends State<_CreateGroupSheet> {
+  final _nameController = TextEditingController();
+  final Set<int> _selectedPatientIds = {};
+  bool _isCreating = false;
+  String? _error;
+
+  @override
+  void dispose() {
+    _nameController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _create() async {
+    if (_selectedPatientIds.length < 2) {
+      setState(() => _error = 'Select at least 2 patients.');
+      return;
+    }
+    setState(() {
+      _isCreating = true;
+      _error = null;
+    });
+    final chat = context.read<ChatService>();
+    final channel = await chat.createChannel(
+      name: _nameController.text.trim().isEmpty ? null : _nameController.text.trim(),
+      patientIds: _selectedPatientIds.toList(),
+    );
+    if (!mounted) return;
+    setState(() => _isCreating = false);
+    if (channel == null) {
+      setState(() => _error = chat.channelError ?? 'Could not create group chat.');
+      return;
+    }
+    Navigator.of(context).pop();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: EdgeInsets.only(
+        left: 20,
+        right: 20,
+        top: 20,
+        bottom: MediaQuery.of(context).viewInsets.bottom + 20,
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            'New group chat',
+            style: GoogleFonts.inter(fontSize: 18, fontWeight: FontWeight.w700, color: AppColors.textDark),
+          ),
+          const SizedBox(height: 16),
+          TextField(
+            controller: _nameController,
+            decoration: InputDecoration(
+              hintText: 'Group name (optional)',
+              hintStyle: GoogleFonts.inter(fontSize: 14, color: AppColors.textLight),
+              filled: true,
+              fillColor: const Color(0xFFF5F5F8),
+              border: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(12),
+                borderSide: BorderSide.none,
+              ),
+              contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+            ),
+          ),
+          const SizedBox(height: 16),
+          Text(
+            'Select at least 2 patients',
+            style: GoogleFonts.inter(fontSize: 13, fontWeight: FontWeight.w600, color: AppColors.textMedium),
+          ),
+          const SizedBox(height: 8),
+          ConstrainedBox(
+            constraints: const BoxConstraints(maxHeight: 280),
+            child: widget.patients.isEmpty
+                ? Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 16),
+                    child: Text(
+                      'No patients found yet.',
+                      style: GoogleFonts.inter(color: AppColors.textMedium),
+                    ),
+                  )
+                : ListView.builder(
+                    shrinkWrap: true,
+                    itemCount: widget.patients.length,
+                    itemBuilder: (context, i) {
+                      final p = widget.patients[i];
+                      final selected = _selectedPatientIds.contains(p.patientId);
+                      return CheckboxListTile(
+                        value: selected,
+                        onChanged: (v) => setState(() {
+                          if (v == true) {
+                            _selectedPatientIds.add(p.patientId);
+                          } else {
+                            _selectedPatientIds.remove(p.patientId);
+                          }
+                        }),
+                        title: Text(p.fullName, style: GoogleFonts.inter(fontSize: 14)),
+                        controlAffinity: ListTileControlAffinity.leading,
+                        contentPadding: EdgeInsets.zero,
+                        activeColor: AppColors.primary,
+                      );
+                    },
+                  ),
+          ),
+          if (_error != null) ...[
+            const SizedBox(height: 8),
+            Text(_error!, style: GoogleFonts.inter(fontSize: 13, color: AppColors.danger)),
+          ],
+          const SizedBox(height: 16),
+          SizedBox(
+            width: double.infinity,
+            height: 48,
+            child: ElevatedButton(
+              onPressed: _isCreating ? null : _create,
+              style: ElevatedButton.styleFrom(
+                backgroundColor: AppColors.primary,
+                foregroundColor: Colors.white,
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+              ),
+              child: _isCreating
+                  ? const SizedBox(
+                      width: 20,
+                      height: 20,
+                      child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                    )
+                  : const Text('Create group'),
+            ),
+          ),
+        ],
       ),
     );
   }

@@ -62,6 +62,7 @@ class ChatMessage {
   final int senderId;
   final int recipientId;
   final int? patientId;
+  final int? channelId;
   final String? body;
   final MessageAttachment? attachment;
   final bool isRead;
@@ -76,6 +77,7 @@ class ChatMessage {
     required this.senderId,
     required this.recipientId,
     this.patientId,
+    this.channelId,
     this.body,
     this.attachment,
     required this.isRead,
@@ -86,12 +88,15 @@ class ChatMessage {
     this.recipient,
   });
 
+  bool get isGroup => channelId != null;
+
   factory ChatMessage.fromJson(Map<String, dynamic> json) {
     return ChatMessage(
       id: json['id'] as int,
       senderId: json['sender_id'] as int,
       recipientId: json['recipient_id'] as int,
       patientId: json['patient_id'] as int?,
+      channelId: json['channel_id'] as int?,
       body: json['body'] as String?,
       attachment: json['attachment'] != null
           ? MessageAttachment.fromJson(json['attachment'] as Map<String, dynamic>)
@@ -119,6 +124,7 @@ class ChatMessage {
         'sender_id': senderId,
         'recipient_id': recipientId,
         'patient_id': patientId,
+        'channel_id': channelId,
         'body': body,
         'attachment': attachment?.toJson(),
         'is_read': isRead,
@@ -138,6 +144,7 @@ class ChatMessage {
       senderId: senderId,
       recipientId: recipientId,
       patientId: patientId,
+      channelId: channelId,
       body: body,
       attachment: attachment,
       isRead: isRead,

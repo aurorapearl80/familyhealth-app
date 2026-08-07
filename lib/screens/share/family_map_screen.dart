@@ -1,7 +1,15 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
+import 'package:provider/provider.dart';
+import '../../models/conversation.dart';
+import '../../models/patient_location.dart';
+import '../../services/auth_service.dart';
+import '../../services/chat_service.dart';
+import '../../services/patient_location_service.dart';
 import '../../theme/app_colors.dart';
+import '../../widgets/profile_avatar.dart';
+import 'chat_screen.dart';
 
 class FamilyMapScreen extends StatefulWidget {
   const FamilyMapScreen({super.key});
@@ -10,48 +18,159 @@ class FamilyMapScreen extends StatefulWidget {
   State<FamilyMapScreen> createState() => _FamilyMapScreenState();
 }
 
+class _FamilyMember {
+  final Conversation conversation;
+  final PatientLocation? location;
+
+  const _FamilyMember({required this.conversation, this.location});
+
+  String get name => conversation.fullName;
+
+  /// Heuristic, not a real presence signal — the API doesn't report one.
+  bool get isOnline =>
+      location != null && DateTime.now().difference(location!.recordedAt) < const Duration(minutes: 10);
+}
+
 class _FamilyMapScreenState extends State<FamilyMapScreen> {
   GoogleMapController? _mapController;
 
-  static const _initialCamera = CameraPosition(
+  static const _defaultCamera = CameraPosition(
     target: LatLng(14.5995, 120.9842),
-    zoom: 15,
+    zoom: 13,
   );
 
-  final _members = [
-    _FamilyMember(
-      name: 'Gabriel',
-      lastUpdate: '2m ago',
-      isOnline: true,
-      position: const LatLng(14.5995, 120.9842),
-    ),
-    _FamilyMember(
-      name: 'Elena',
-      lastUpdate: '15m ago',
-      isOnline: false,
-      position: const LatLng(14.6015, 120.9865),
-    ),
-  ];
+  bool _isAdmin = false;
+  bool _roleLoaded = false;
+  bool _isLoading = false;
+  String? _error;
+  List<_FamilyMember> _members = [];
 
-  Set<Marker> get _markers => _members.map((m) {
-        return Marker(
-          markerId: MarkerId(m.name),
-          position: m.position,
-          infoWindow: InfoWindow(title: m.name),
-        );
-      }).toSet();
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
 
-  Set<Circle> get _circles => _members
-      .where((m) => m.isOnline)
-      .map((m) => Circle(
-            circleId: CircleId('${m.name}_range'),
-            center: m.position,
-            radius: 120,
-            fillColor: AppColors.primary.withOpacity(0.15),
-            strokeColor: AppColors.primary.withOpacity(0.3),
-            strokeWidth: 1,
-          ))
-      .toSet();
+  Future<void> _load() async {
+    final role = await AuthService.getRoleType();
+    if (!mounted) return;
+    setState(() {
+      _isAdmin = role == 'admin';
+      _roleLoaded = true;
+    });
+    if (!_isAdmin) return;
+    await _loadMembers();
+  }
+
+  Future<void> _loadMembers() async {
+    setState(() {
+      _isLoading = true;
+      _error = null;
+    });
+    try {
+      final chat = context.read<ChatService>();
+      await chat.fetchConversations();
+      if (chat.error != null && chat.conversations.isEmpty) {
+        setState(() {
+          _error = chat.error;
+          _isLoading = false;
+        });
+        return;
+      }
+      final conversations = chat.conversations;
+      final locations = await Future.wait(
+        conversations.map((c) => PatientLocationService.fetchLatest(c.patientId)),
+      );
+      if (!mounted) return;
+      setState(() {
+        _members = [
+          for (var i = 0; i < conversations.length; i++)
+            _FamilyMember(conversation: conversations[i], location: locations[i]),
+        ];
+        _isLoading = false;
+      });
+      _fitCameraToMembers();
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _error = 'Failed to load family locations: $e';
+        _isLoading = false;
+      });
+    }
+  }
+
+  void _fitCameraToMembers() {
+    final withLocation = _members.where((m) => m.location != null).toList();
+    if (withLocation.isEmpty || _mapController == null) return;
+    final first = withLocation.first.location!;
+    _mapController!.animateCamera(
+      CameraUpdate.newLatLng(LatLng(first.latitude, first.longitude)),
+    );
+  }
+
+  Color _colorFor(int i) {
+    const colors = [
+      AppColors.primary,
+      Color(0xFF8B6BAE),
+      Color(0xFF4A90D9),
+      Color(0xFF5BA55B),
+      Color(0xFFD4875B),
+    ];
+    return colors[i % colors.length];
+  }
+
+  String _timeAgo(DateTime dt) {
+    final diff = DateTime.now().difference(dt);
+    if (diff.inMinutes < 1) return 'now';
+    if (diff.inMinutes < 60) return '${diff.inMinutes}m ago';
+    if (diff.inHours < 24) return '${diff.inHours}h ago';
+    return '${diff.inDays}d ago';
+  }
+
+  Set<Marker> get _markers {
+    final markers = <Marker>{};
+    for (var i = 0; i < _members.length; i++) {
+      final m = _members[i];
+      if (m.location == null) continue;
+      markers.add(Marker(
+        markerId: MarkerId('member_${m.conversation.patientId}'),
+        position: LatLng(m.location!.latitude, m.location!.longitude),
+        infoWindow: InfoWindow(title: m.name),
+      ));
+    }
+    return markers;
+  }
+
+  Set<Circle> get _circles {
+    final circles = <Circle>{};
+    for (final m in _members) {
+      if (m.location == null || !m.isOnline) continue;
+      circles.add(Circle(
+        circleId: CircleId('member_${m.conversation.patientId}_range'),
+        center: LatLng(m.location!.latitude, m.location!.longitude),
+        radius: 120,
+        fillColor: AppColors.primary.withOpacity(0.15),
+        strokeColor: AppColors.primary.withOpacity(0.3),
+        strokeWidth: 1,
+      ));
+    }
+    return circles;
+  }
+
+  void _openChat(_FamilyMember member, Color color) {
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => ChatScreen(
+          contactName: member.name,
+          contactColor: color,
+          contactImageUrl: member.conversation.profileImageUrl,
+          patientId: member.conversation.patientId,
+          recipientUserId: member.conversation.recipientUserId,
+          isAdmin: true,
+        ),
+      ),
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -63,39 +182,60 @@ class _FamilyMapScreenState extends State<FamilyMapScreen> {
             Column(
               children: [
                 _buildHeader(),
-                Expanded(
-                  child: Stack(
-                    children: [
-                      GoogleMap(
-                        initialCameraPosition: _initialCamera,
-                        markers: _markers,
-                        circles: _circles,
-                        myLocationButtonEnabled: false,
-                        zoomControlsEnabled: false,
-                        mapToolbarEnabled: false,
-                        onMapCreated: (c) => _mapController = c,
-                      ),
-                      // Layer toggle
-                      Positioned(
-                        top: 16,
-                        right: 16,
-                        child: _buildLayerButton(),
-                      ),
-                    ],
-                  ),
-                ),
+                Expanded(child: _buildMapArea()),
               ],
             ),
-            // Bottom sheet
-            DraggableScrollableSheet(
-              initialChildSize: 0.38,
-              minChildSize: 0.22,
-              maxChildSize: 0.65,
-              builder: (_, controller) => _buildFamilySheet(controller),
-            ),
+            if (_roleLoaded && _isAdmin)
+              DraggableScrollableSheet(
+                initialChildSize: 0.38,
+                minChildSize: 0.22,
+                maxChildSize: 0.65,
+                builder: (_, controller) => _buildFamilySheet(controller),
+              ),
           ],
         ),
       ),
+    );
+  }
+
+  Widget _buildMapArea() {
+    if (!_roleLoaded) {
+      return const Center(child: CircularProgressIndicator());
+    }
+    if (!_isAdmin) {
+      return Center(
+        child: Padding(
+          padding: const EdgeInsets.all(24),
+          child: Text(
+            'The family map is only available for admin accounts right now.',
+            textAlign: TextAlign.center,
+            style: GoogleFonts.inter(color: AppColors.textMedium),
+          ),
+        ),
+      );
+    }
+    return Stack(
+      children: [
+        GoogleMap(
+          initialCameraPosition: _defaultCamera,
+          markers: _markers,
+          circles: _circles,
+          myLocationButtonEnabled: false,
+          zoomControlsEnabled: false,
+          mapToolbarEnabled: false,
+          onMapCreated: (c) {
+            _mapController = c;
+            _fitCameraToMembers();
+          },
+        ),
+        Positioned(top: 16, right: 16, child: _buildLayerButton()),
+        if (_isLoading)
+          const Positioned(
+            top: 16,
+            left: 16,
+            child: _LoadingChip(),
+          ),
+      ],
     );
   }
 
@@ -162,7 +302,6 @@ class _FamilyMapScreenState extends State<FamilyMapScreen> {
       ),
       child: Column(
         children: [
-          // Drag handle
           Container(
             margin: const EdgeInsets.only(top: 10, bottom: 4),
             width: 36,
@@ -199,25 +338,47 @@ class _FamilyMapScreenState extends State<FamilyMapScreen> {
               ],
             ),
           ),
-          Expanded(
-            child: ListView.builder(
-              controller: controller,
-              scrollDirection: Axis.horizontal,
-              padding: const EdgeInsets.symmetric(horizontal: 16),
-              itemCount: _members.length,
-              itemBuilder: (_, i) => Padding(
-                padding: EdgeInsets.only(right: i < _members.length - 1 ? 12 : 0),
-                child: _buildMemberCard(_members[i]),
-              ),
-            ),
-          ),
+          Expanded(child: _buildSheetBody(controller)),
           const SizedBox(height: 8),
         ],
       ),
     );
   }
 
-  Widget _buildMemberCard(_FamilyMember member) {
+  Widget _buildSheetBody(ScrollController controller) {
+    if (_isLoading && _members.isEmpty) {
+      return const Center(child: CircularProgressIndicator());
+    }
+    if (_error != null && _members.isEmpty) {
+      return Center(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(_error!, style: GoogleFonts.inter(color: AppColors.textMedium)),
+            const SizedBox(height: 8),
+            TextButton(onPressed: _loadMembers, child: const Text('Retry')),
+          ],
+        ),
+      );
+    }
+    if (_members.isEmpty) {
+      return Center(
+        child: Text('No family members yet', style: GoogleFonts.inter(color: AppColors.textMedium)),
+      );
+    }
+    return ListView.builder(
+      controller: controller,
+      scrollDirection: Axis.horizontal,
+      padding: const EdgeInsets.symmetric(horizontal: 16),
+      itemCount: _members.length,
+      itemBuilder: (_, i) => Padding(
+        padding: EdgeInsets.only(right: i < _members.length - 1 ? 12 : 0),
+        child: _buildMemberCard(_members[i], _colorFor(i)),
+      ),
+    );
+  }
+
+  Widget _buildMemberCard(_FamilyMember member, Color color) {
     return Container(
       width: 210,
       padding: const EdgeInsets.all(12),
@@ -233,13 +394,11 @@ class _FamilyMapScreenState extends State<FamilyMapScreen> {
             children: [
               Stack(
                 children: [
-                  CircleAvatar(
+                  ProfileAvatar.buildAvatar(
+                    imageUrl: member.conversation.profileImageUrl,
+                    initials: member.name.isNotEmpty ? member.name[0] : '?',
                     radius: 22,
-                    backgroundColor: member.isOnline
-                        ? const Color(0xFF8B7355)
-                        : const Color(0xFFD4A8A8),
-                    child: const Icon(Icons.person,
-                        color: Colors.white, size: 24),
+                    backgroundColor: color,
                   ),
                   Positioned(
                     right: 0,
@@ -248,9 +407,7 @@ class _FamilyMapScreenState extends State<FamilyMapScreen> {
                       width: 12,
                       height: 12,
                       decoration: BoxDecoration(
-                        color: member.isOnline
-                            ? AppColors.primary
-                            : AppColors.textLight,
+                        color: member.isOnline ? AppColors.primary : AppColors.textLight,
                         shape: BoxShape.circle,
                         border: Border.all(color: Colors.white, width: 2),
                       ),
@@ -265,6 +422,7 @@ class _FamilyMapScreenState extends State<FamilyMapScreen> {
                   children: [
                     Text(
                       member.name,
+                      overflow: TextOverflow.ellipsis,
                       style: GoogleFonts.inter(
                         fontSize: 14,
                         fontWeight: FontWeight.w600,
@@ -272,7 +430,9 @@ class _FamilyMapScreenState extends State<FamilyMapScreen> {
                       ),
                     ),
                     Text(
-                      'Last updated: ${member.lastUpdate}',
+                      member.location != null
+                          ? 'Last updated: ${_timeAgo(member.location!.recordedAt)}'
+                          : 'Location unavailable',
                       style: GoogleFonts.inter(
                         fontSize: 11,
                         color: AppColors.textMedium,
@@ -288,21 +448,24 @@ class _FamilyMapScreenState extends State<FamilyMapScreen> {
             children: [
               Expanded(
                 child: GestureDetector(
-                  onTap: () {},
+                  onTap: member.location != null
+                      ? () => _mapController?.animateCamera(CameraUpdate.newLatLng(
+                            LatLng(member.location!.latitude, member.location!.longitude),
+                          ))
+                      : null,
                   child: Container(
                     padding: const EdgeInsets.symmetric(vertical: 8),
                     decoration: BoxDecoration(
-                      color: AppColors.primary,
+                      color: member.location != null ? AppColors.primary : AppColors.textLight,
                       borderRadius: BorderRadius.circular(10),
                     ),
                     child: Row(
                       mainAxisAlignment: MainAxisAlignment.center,
                       children: [
-                        const Icon(Icons.navigation,
-                            color: Colors.white, size: 14),
+                        const Icon(Icons.navigation, color: Colors.white, size: 14),
                         const SizedBox(width: 4),
                         Text(
-                          'DIRECTIONS',
+                          'LOCATE',
                           style: GoogleFonts.inter(
                             fontSize: 11,
                             fontWeight: FontWeight.w700,
@@ -315,9 +478,9 @@ class _FamilyMapScreenState extends State<FamilyMapScreen> {
                 ),
               ),
               const SizedBox(width: 6),
-              _buildIconBtn(Icons.chat_bubble_outline),
+              _buildIconBtn(Icons.chat_bubble_outline, onTap: () => _openChat(member, color)),
               const SizedBox(width: 6),
-              _buildIconBtn(Icons.phone_outlined),
+              _buildIconBtn(Icons.phone_outlined, onTap: () {}),
             ],
           ),
         ],
@@ -325,9 +488,9 @@ class _FamilyMapScreenState extends State<FamilyMapScreen> {
     );
   }
 
-  Widget _buildIconBtn(IconData icon) {
+  Widget _buildIconBtn(IconData icon, {required VoidCallback onTap}) {
     return GestureDetector(
-      onTap: () {},
+      onTap: onTap,
       child: Container(
         padding: const EdgeInsets.all(8),
         decoration: BoxDecoration(
@@ -340,16 +503,26 @@ class _FamilyMapScreenState extends State<FamilyMapScreen> {
   }
 }
 
-class _FamilyMember {
-  final String name;
-  final String lastUpdate;
-  final bool isOnline;
-  final LatLng position;
+class _LoadingChip extends StatelessWidget {
+  const _LoadingChip();
 
-  const _FamilyMember({
-    required this.name,
-    required this.lastUpdate,
-    required this.isOnline,
-    required this.position,
-  });
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(10),
+        boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.12), blurRadius: 6)],
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: const [
+          SizedBox(width: 14, height: 14, child: CircularProgressIndicator(strokeWidth: 2)),
+          SizedBox(width: 8),
+          Text('Loading locations…', style: TextStyle(fontSize: 12)),
+        ],
+      ),
+    );
+  }
 }

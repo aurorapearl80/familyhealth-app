@@ -1,7 +1,7 @@
 name: familyhealth
 description: Family Watch Today - Your health, decoded with precision.
 publish_to: 'none'
-version: 1.0.0+3
+version: 1.0.0+4
 
 environment:
   sdk: '>=3.0.0 <4.0.0'

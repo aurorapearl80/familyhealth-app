@@ -31,11 +31,16 @@ class ProfileAvatar extends StatelessWidget {
     );
   }
 
-  /// Static helper so ProfileScreen can also call this without importing this widget.
+  /// Static helper so ProfileScreen (and the chat screens) can call this
+  /// without importing this widget. [backgroundColor]/[icon] let callers with
+  /// their own per-item color scheme (e.g. chat contact colors, group icon)
+  /// override the default purple-gradient initials circle.
   static Widget buildAvatar({
     required String? imageUrl,
     required String initials,
     required double radius,
+    Color? backgroundColor,
+    IconData? icon,
   }) {
     final size = radius * 2;
 
@@ -46,37 +51,42 @@ class ProfileAvatar extends StatelessWidget {
           width: size,
           height: size,
           fit: BoxFit.cover,
-          errorBuilder: (_, __, ___) => _initialsCircle(initials, size),
+          errorBuilder: (_, __, ___) => _fallbackCircle(initials, size, backgroundColor, icon),
           loadingBuilder: (_, child, progress) =>
-              progress == null ? child : _initialsCircle(initials, size),
+              progress == null ? child : _fallbackCircle(initials, size, backgroundColor, icon),
         ),
       );
     }
 
-    return _initialsCircle(initials, size);
+    return _fallbackCircle(initials, size, backgroundColor, icon);
   }
 
-  static Widget _initialsCircle(String initials, double size) {
+  static Widget _fallbackCircle(String initials, double size, Color? backgroundColor, IconData? icon) {
     return Container(
       width: size,
       height: size,
-      decoration: const BoxDecoration(
+      decoration: BoxDecoration(
         shape: BoxShape.circle,
-        gradient: LinearGradient(
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-          colors: [Color(0xFF6C63FF), Color(0xFF3D35B5)],
-        ),
+        color: backgroundColor,
+        gradient: backgroundColor == null
+            ? const LinearGradient(
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+                colors: [Color(0xFF6C63FF), Color(0xFF3D35B5)],
+              )
+            : null,
       ),
       child: Center(
-        child: Text(
-          initials,
-          style: GoogleFonts.inter(
-            fontSize: size * 0.33,
-            fontWeight: FontWeight.w700,
-            color: Colors.white,
-          ),
-        ),
+        child: icon != null
+            ? Icon(icon, color: Colors.white, size: size * 0.45)
+            : Text(
+                initials,
+                style: GoogleFonts.inter(
+                  fontSize: size * 0.33,
+                  fontWeight: FontWeight.w700,
+                  color: Colors.white,
+                ),
+              ),
       ),
     );
   }

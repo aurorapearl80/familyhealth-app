@@ -9,13 +9,16 @@ import '../../services/auth_service.dart';
 import '../../services/chat_service.dart';
 import '../../services/socket_service.dart';
 import '../../theme/app_colors.dart';
+import '../../widgets/profile_avatar.dart';
 import 'video_call_screen.dart';
 
 class ChatScreen extends StatefulWidget {
   final String contactName;
   final Color contactColor;
+  final String? contactImageUrl;
   final int? patientId;
   final int? recipientUserId;
+  final int? channelId;
   final bool isAdmin;
 
   const ChatScreen({
@@ -23,9 +26,13 @@ class ChatScreen extends StatefulWidget {
     required this.contactName,
     required this.contactColor,
     required this.isAdmin,
+    this.contactImageUrl,
     this.patientId,
     this.recipientUserId,
+    this.channelId,
   });
+
+  bool get isGroup => channelId != null;
 
   @override
   State<ChatScreen> createState() => _ChatScreenState();
@@ -53,10 +60,12 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   Future<void> _loadMessages() async {
-    await context.read<ChatService>().fetchMessages(
-          isAdmin: widget.isAdmin,
-          patientId: widget.patientId,
-        );
+    final chat = context.read<ChatService>();
+    if (widget.isGroup) {
+      await chat.fetchChannelMessages(widget.channelId!);
+    } else {
+      await chat.fetchMessages(isAdmin: widget.isAdmin, patientId: widget.patientId);
+    }
     _scrollToBottom();
   }
 
@@ -65,19 +74,27 @@ class _ChatScreenState extends State<ChatScreen> {
     final myUserId = int.tryParse(userIdStr ?? '');
     if (myUserId == null) return;
 
-    final targetUserId =
-        widget.isAdmin ? widget.recipientUserId : await AuthService.getAddedByUserId();
+    // For a group send, the recipient list comes back per-message from the send
+    // response instead — there's no single fixed target the way 1:1 has one.
+    final targetUserId = widget.isGroup
+        ? null
+        : (widget.isAdmin ? widget.recipientUserId : await AuthService.getAddedByUserId());
     if (!mounted) return;
 
     setState(() {
       _myUserId = myUserId;
       _targetUserId = targetUserId;
-      _typingPatientId = widget.isAdmin ? widget.patientId : myUserId;
+      _typingPatientId = widget.isGroup ? null : (widget.isAdmin ? widget.patientId : myUserId);
     });
 
     _socketService.onMessage = (message) {
       if (!mounted) return;
-      context.read<ChatService>().receiveLiveMessage(message);
+      final chat = context.read<ChatService>();
+      if (widget.isGroup) {
+        chat.receiveLiveChannelMessage(message);
+      } else {
+        chat.receiveLiveMessage(message);
+      }
       _scrollToBottom();
     };
     _socketService.onSendError = (reason) {
@@ -95,10 +112,18 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   void _handlePeerTyping(Map<String, dynamic> data, {required bool isTyping}) {
-    if (!mounted || _typingPatientId == null) return;
-    final eventPatientId = (data['patient_id'] as num?)?.toInt();
+    if (!mounted) return;
     final eventSenderId = (data['sender_id'] as num?)?.toInt();
-    if (eventPatientId != _typingPatientId || eventSenderId == _myUserId) return;
+    if (eventSenderId == _myUserId) return;
+
+    if (widget.isGroup) {
+      final eventChannelId = (data['channel_id'] as num?)?.toInt();
+      if (eventChannelId != widget.channelId) return;
+    } else {
+      if (_typingPatientId == null) return;
+      final eventPatientId = (data['patient_id'] as num?)?.toInt();
+      if (eventPatientId != _typingPatientId) return;
+    }
 
     _peerTypingTimeout?.cancel();
     if (!isTyping) {
@@ -113,21 +138,30 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   void _onTextChanged() {
-    if (_typingPatientId == null || _myUserId == null) return;
+    if (_myUserId == null) return;
+    if (!widget.isGroup && _typingPatientId == null) return;
     if (_controller.text.trim().isEmpty) {
       _stopTypingNow();
       return;
     }
-    _socketService.emitTyping(patientId: _typingPatientId!, senderId: _myUserId!);
+    _socketService.emitTyping(
+      channelId: widget.isGroup ? widget.channelId : null,
+      patientId: widget.isGroup ? null : _typingPatientId,
+      senderId: _myUserId!,
+    );
     _stopTypingDebounce?.cancel();
     _stopTypingDebounce = Timer(const Duration(seconds: 2), _stopTypingNow);
   }
 
   void _stopTypingNow() {
     _stopTypingDebounce?.cancel();
-    if (_typingPatientId != null && _myUserId != null) {
-      _socketService.emitStopTyping(patientId: _typingPatientId!, senderId: _myUserId!);
-    }
+    if (_myUserId == null) return;
+    if (!widget.isGroup && _typingPatientId == null) return;
+    _socketService.emitStopTyping(
+      channelId: widget.isGroup ? widget.channelId : null,
+      patientId: widget.isGroup ? null : _typingPatientId,
+      senderId: _myUserId!,
+    );
   }
 
   @override
@@ -147,11 +181,33 @@ class _ChatScreenState extends State<ChatScreen> {
     setState(() => _isSending = true);
     _controller.clear();
     _stopTypingNow();
-    final sent = await context.read<ChatService>().sendMessage(
-          isAdmin: widget.isAdmin,
-          patientId: widget.patientId,
-          body: text,
+    final chat = context.read<ChatService>();
+
+    if (widget.isGroup) {
+      final result = await chat.sendChannelMessage(channelId: widget.channelId!, body: text);
+      if (!mounted) return;
+      setState(() => _isSending = false);
+      if (result == null) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Failed to send message. Please try again.')),
         );
+        _controller.text = text;
+        return;
+      }
+      // The channel relay has no server-side fan-out — address each
+      // recipient's own copy of the message individually.
+      for (final r in result.recipients) {
+        _socketService.sendPrivateMessage(to: r.recipientId, message: r.message.toJson());
+      }
+      _scrollToBottom();
+      return;
+    }
+
+    final sent = await chat.sendMessage(
+      isAdmin: widget.isAdmin,
+      patientId: widget.patientId,
+      body: text,
+    );
     if (!mounted) return;
     setState(() => _isSending = false);
     if (sent == null) {
@@ -228,17 +284,12 @@ class _ChatScreenState extends State<ChatScreen> {
         ),
         title: Row(
           children: [
-            CircleAvatar(
+            ProfileAvatar.buildAvatar(
+              imageUrl: widget.isGroup ? null : widget.contactImageUrl,
+              initials: widget.contactName.isNotEmpty ? widget.contactName[0] : '?',
               radius: 18,
               backgroundColor: widget.contactColor,
-              child: Text(
-                widget.contactName[0],
-                style: const TextStyle(
-                  color: Colors.white,
-                  fontWeight: FontWeight.bold,
-                  fontSize: 14,
-                ),
-              ),
+              icon: widget.isGroup ? Icons.groups : null,
             ),
             const SizedBox(width: 10),
             Expanded(
@@ -282,10 +333,14 @@ class _ChatScreenState extends State<ChatScreen> {
           Expanded(
             child: Consumer<ChatService>(
               builder: (context, chat, _) {
-                if (chat.isLoadingMessages && chat.messages.isEmpty) {
+                final msgs = widget.isGroup ? chat.channelMessages : chat.messages;
+                final isLoading = widget.isGroup ? chat.isLoadingChannelMessages : chat.isLoadingMessages;
+                final error = widget.isGroup ? chat.channelMessagesError : chat.error;
+
+                if (isLoading && msgs.isEmpty) {
                   return const Center(child: CircularProgressIndicator());
                 }
-                if (chat.error != null && chat.messages.isEmpty) {
+                if (error != null && msgs.isEmpty) {
                   return Center(
                     child: Padding(
                       padding: const EdgeInsets.all(24),
@@ -293,7 +348,7 @@ class _ChatScreenState extends State<ChatScreen> {
                         mainAxisSize: MainAxisSize.min,
                         children: [
                           Text(
-                            chat.error!,
+                            error,
                             textAlign: TextAlign.center,
                             style: GoogleFonts.inter(color: AppColors.textMedium),
                           ),
@@ -304,7 +359,7 @@ class _ChatScreenState extends State<ChatScreen> {
                     ),
                   );
                 }
-                if (chat.messages.isEmpty && !_peerTyping) {
+                if (msgs.isEmpty && !_peerTyping) {
                   return Center(
                     child: Text(
                       'No messages yet. Say hello!',
@@ -312,16 +367,16 @@ class _ChatScreenState extends State<ChatScreen> {
                     ),
                   );
                 }
-                final itemCount = chat.messages.length + (_peerTyping ? 1 : 0);
+                final itemCount = msgs.length + (_peerTyping ? 1 : 0);
                 return ListView.builder(
                   controller: _scrollController,
                   padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
                   itemCount: itemCount,
                   itemBuilder: (_, i) {
-                    if (_peerTyping && i == chat.messages.length) {
+                    if (_peerTyping && i == msgs.length) {
                       return _buildTypingBubble();
                     }
-                    return _buildBubble(chat.messages[i]);
+                    return _buildBubble(msgs[i]);
                   },
                 );
               },
@@ -335,8 +390,23 @@ class _ChatScreenState extends State<ChatScreen> {
 
   static const double _avatarGutter = 36;
 
+  static const List<Color> _senderPalette = [
+    AppColors.primary,
+    Color(0xFF8B6BAE),
+    Color(0xFF4A90D9),
+    Color(0xFF5BA55B),
+    Color(0xFFD4875B),
+  ];
+
+  Color _colorForSender(int senderId) => _senderPalette[senderId % _senderPalette.length];
+
   Widget _buildBubble(ChatMessage msg) {
     final hasText = msg.body != null && msg.body!.isNotEmpty;
+    final senderName = msg.sender?.name;
+    final avatarColor = widget.isGroup ? _colorForSender(msg.senderId) : widget.contactColor;
+    final avatarInitial = widget.isGroup
+        ? (senderName?.isNotEmpty == true ? senderName![0] : '?')
+        : (widget.contactName.isNotEmpty ? widget.contactName[0] : '?');
 
     final bubbleContent = Container(
       padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
@@ -388,6 +458,14 @@ class _ChatScreenState extends State<ChatScreen> {
       child: Column(
         crossAxisAlignment: msg.isMine ? CrossAxisAlignment.end : CrossAxisAlignment.start,
         children: [
+          if (widget.isGroup && !msg.isMine && senderName != null)
+            Padding(
+              padding: const EdgeInsets.only(left: _avatarGutter, bottom: 2),
+              child: Text(
+                senderName,
+                style: GoogleFonts.inter(fontSize: 11, fontWeight: FontWeight.w600, color: AppColors.textMedium),
+              ),
+            ),
           Align(
             alignment: msg.isMine ? Alignment.centerRight : Alignment.centerLeft,
             child: ConstrainedBox(
@@ -398,17 +476,11 @@ class _ChatScreenState extends State<ChatScreen> {
                       mainAxisSize: MainAxisSize.min,
                       crossAxisAlignment: CrossAxisAlignment.end,
                       children: [
-                        CircleAvatar(
+                        ProfileAvatar.buildAvatar(
+                          imageUrl: msg.sender?.profileImageUrl,
+                          initials: avatarInitial,
                           radius: 14,
-                          backgroundColor: widget.contactColor,
-                          child: Text(
-                            widget.contactName.isNotEmpty ? widget.contactName[0] : '?',
-                            style: const TextStyle(
-                              color: Colors.white,
-                              fontWeight: FontWeight.bold,
-                              fontSize: 11,
-                            ),
-                          ),
+                          backgroundColor: avatarColor,
                         ),
                         const SizedBox(width: 8),
                         Flexible(child: bubbleContent),

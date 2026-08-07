@@ -1,9 +1,25 @@
 import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
+import '../models/chat_channel.dart';
 import '../models/chat_message.dart';
 import '../models/conversation.dart';
 import 'auth_service.dart';
+
+/// The result of a successful group-chat send: [mine] is the sender's own copy
+/// (for optimistic UI), [recipients] is what to loop over when relaying the
+/// message live over the socket — the channel relay has no server-side fan-out.
+class ChannelSendResult {
+  final ChatMessage mine;
+  final List<ChannelRecipientMessage> recipients;
+  const ChannelSendResult({required this.mine, required this.recipients});
+}
+
+class ChannelRecipientMessage {
+  final int recipientId;
+  final ChatMessage message;
+  const ChannelRecipientMessage({required this.recipientId, required this.message});
+}
 
 /// Backs the chat list (admin) and message thread screens against the
 /// real messaging API documented in the "Chat API Reference".
@@ -16,11 +32,27 @@ class ChatService extends ChangeNotifier {
   bool _isLoadingMessages = false;
   String? _error;
 
+  List<ChatChannel> _channels = [];
+  List<ChatMessage> _channelMessages = [];
+  bool _isLoadingChannels = false;
+  bool _isLoadingChannelMessages = false;
+  int _totalChannelUnreadCount = 0;
+  String? _channelError;
+  String? _channelMessagesError;
+
   List<Conversation> get conversations => _conversations;
   List<ChatMessage> get messages => _messages;
   bool get isLoadingConversations => _isLoadingConversations;
   bool get isLoadingMessages => _isLoadingMessages;
   String? get error => _error;
+
+  List<ChatChannel> get channels => _channels;
+  List<ChatMessage> get channelMessages => _channelMessages;
+  bool get isLoadingChannels => _isLoadingChannels;
+  bool get isLoadingChannelMessages => _isLoadingChannelMessages;
+  int get totalChannelUnreadCount => _totalChannelUnreadCount;
+  String? get channelError => _channelError;
+  String? get channelMessagesError => _channelMessagesError;
 
   Future<Map<String, String>> _headers() async {
     final token = await AuthService.getToken();
@@ -146,10 +178,145 @@ class ChatService extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// Every group chat the current user participates in (admin or patient).
+  Future<void> fetchChannels() async {
+    _isLoadingChannels = true;
+    _channelError = null;
+    notifyListeners();
+    try {
+      final response = await http
+          .get(Uri.parse('$_base/messaging/channels'), headers: await _headers())
+          .timeout(const Duration(seconds: 15));
+      if (response.statusCode == 200) {
+        final decoded = _decodeJsonOrThrow(response);
+        _channels = _asList(decoded)
+            .map((e) => ChatChannel.fromJson(e as Map<String, dynamic>))
+            .toList();
+        _totalChannelUnreadCount = decoded is Map<String, dynamic> &&
+                decoded['meta'] is Map &&
+                (decoded['meta'] as Map)['total_unread_count'] != null
+            ? (decoded['meta']['total_unread_count'] as num).toInt()
+            : _channels.fold(0, (sum, c) => sum + c.unreadCount);
+      } else {
+        _channelError = 'Failed to load group chats (${response.statusCode})';
+      }
+    } catch (e) {
+      _channelError = e is FormatException ? e.message : 'Network error: $e';
+      debugPrint('[ChatService] fetchChannels error: $e');
+    }
+    _isLoadingChannels = false;
+    notifyListeners();
+  }
+
+  /// Admin-only server-side (a plain 403 if the caller isn't an admin).
+  /// [patientIds] must be at least 2 of the admin's own patients.
+  /// Returns null and sets [channelError] on failure (403/422/network).
+  Future<ChatChannel?> createChannel({String? name, required List<int> patientIds}) async {
+    try {
+      final response = await http
+          .post(
+            Uri.parse('$_base/messaging/channels'),
+            headers: await _headers(),
+            body: jsonEncode({'name': name, 'patient_ids': patientIds}),
+          )
+          .timeout(const Duration(seconds: 15));
+      if (response.statusCode == 201) {
+        final decoded = _decodeJsonOrThrow(response) as Map<String, dynamic>;
+        final channel = ChatChannel.fromJson(decoded['data'] as Map<String, dynamic>);
+        _channels.insert(0, channel);
+        notifyListeners();
+        return channel;
+      }
+      if (response.statusCode == 403) {
+        _channelError = 'Only admins can create group chats.';
+      } else if (response.statusCode == 422) {
+        final decoded = _decodeJsonOrThrow(response) as Map<String, dynamic>;
+        final errors = decoded['errors'] as Map<String, dynamic>?;
+        final errorLists = errors?.values.whereType<List>().toList() ?? const [];
+        final firstError = errorLists.isNotEmpty && errorLists.first.isNotEmpty ? errorLists.first.first : null;
+        _channelError = firstError as String? ?? decoded['message'] as String? ?? 'Could not create group chat.';
+      } else {
+        _channelError = 'Failed to create group chat (${response.statusCode})';
+      }
+    } catch (e) {
+      _channelError = e is FormatException ? e.message : 'Network error: $e';
+      debugPrint('[ChatService] createChannel error: $e');
+    }
+    notifyListeners();
+    return null;
+  }
+
+  Future<void> fetchChannelMessages(int channelId) async {
+    _isLoadingChannelMessages = true;
+    _channelMessagesError = null;
+    notifyListeners();
+    try {
+      final response = await http
+          .get(Uri.parse('$_base/messaging/channels/$channelId/messages'), headers: await _headers())
+          .timeout(const Duration(seconds: 15));
+      if (response.statusCode == 200) {
+        _channelMessages = _asList(_decodeJsonOrThrow(response))
+            .map((e) => ChatMessage.fromJson(e as Map<String, dynamic>))
+            .toList();
+      } else {
+        _channelMessagesError = 'Failed to load messages (${response.statusCode})';
+      }
+    } catch (e) {
+      _channelMessagesError = e is FormatException ? e.message : 'Network error: $e';
+      debugPrint('[ChatService] fetchChannelMessages error: $e');
+    }
+    _isLoadingChannelMessages = false;
+    notifyListeners();
+  }
+
+  /// Sends a text message to a group. The channel relay has no server-side
+  /// fan-out, so the caller must loop [ChannelSendResult.recipients] and emit
+  /// `private_message` once per entry to deliver it live.
+  Future<ChannelSendResult?> sendChannelMessage({required int channelId, required String body}) async {
+    try {
+      final response = await http
+          .post(
+            Uri.parse('$_base/messaging/channels/$channelId/messages'),
+            headers: await _headers(),
+            body: jsonEncode({'body': body}),
+          )
+          .timeout(const Duration(seconds: 15));
+      if (response.statusCode == 201) {
+        final decoded = _decodeJsonOrThrow(response) as Map<String, dynamic>;
+        final mine = ChatMessage.fromJson(decoded['data'] as Map<String, dynamic>);
+        final recipients = (decoded['recipients'] as List<dynamic>? ?? [])
+            .map((e) => ChannelRecipientMessage(
+                  recipientId: (e as Map<String, dynamic>)['recipient_id'] as int,
+                  message: ChatMessage.fromJson(e['message'] as Map<String, dynamic>),
+                ))
+            .toList();
+        _channelMessages.add(mine);
+        notifyListeners();
+        return ChannelSendResult(mine: mine, recipients: recipients);
+      }
+      debugPrint('[ChatService] sendChannelMessage failed: ${response.statusCode} ${response.body}');
+    } catch (e) {
+      debugPrint('[ChatService] sendChannelMessage error: $e');
+    }
+    return null;
+  }
+
+  /// Merges a group message delivered live over the socket, deduped by id.
+  void receiveLiveChannelMessage(ChatMessage message) {
+    if (_channelMessages.any((m) => m.id == message.id)) return;
+    _channelMessages.add(message);
+    notifyListeners();
+  }
+
   void clear() {
     _conversations = [];
     _messages = [];
     _error = null;
+    _channels = [];
+    _channelMessages = [];
+    _totalChannelUnreadCount = 0;
+    _channelError = null;
+    _channelMessagesError = null;
     notifyListeners();
   }
 }
