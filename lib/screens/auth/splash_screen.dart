@@ -6,9 +6,12 @@ import 'package:provider/provider.dart';
 import '../../services/auth_service.dart';
 import '../../services/ble_summary_service.dart';
 import '../../services/location_service.dart';
+import '../../services/native_call_bridge.dart';
 import '../../services/onesignal_service.dart';
 import '../../services/patient_service.dart';
+import '../../theme/app_colors.dart';
 import '../main_nav_screen.dart';
+import '../share/video_call_screen.dart';
 import 'login_screen.dart';
 
 class SplashScreen extends StatefulWidget {
@@ -69,11 +72,17 @@ class _SplashScreenState extends State<SplashScreen>
       }
     }
 
+    // If the app was just launched by accepting a native incoming-call
+    // notification (see IncomingCallActivity.kt), skip the dashboard and go
+    // straight into the call.
+    final pendingCallerName = goHome ? await NativeCallBridge.getPendingCallLaunch() : null;
+
     if (!mounted) return;
     Navigator.of(context).pushReplacement(
       PageRouteBuilder(
-        pageBuilder: (_, __, ___) =>
-            goHome ? const MainNavScreen() : const LoginScreen(),
+        pageBuilder: (_, __, ___) => pendingCallerName != null
+            ? VideoCallScreen(contactName: pendingCallerName, contactColor: AppColors.primary)
+            : (goHome ? const MainNavScreen() : const LoginScreen()),
         transitionsBuilder: (_, anim, __, child) =>
             FadeTransition(opacity: anim, child: child),
         transitionDuration: const Duration(milliseconds: 600),
