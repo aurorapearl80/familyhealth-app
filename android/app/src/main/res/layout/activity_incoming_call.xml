@@ -1,0 +1,67 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="#0F0F1A"
+    android:orientation="vertical"
+    android:gravity="center_horizontal"
+    android:paddingTop="96dp"
+    android:paddingBottom="48dp">
+
+    <ImageView
+        android:id="@+id/caller_avatar"
+        android:layout_width="120dp"
+        android:layout_height="120dp"
+        android:background="@android:color/holo_purple"
+        android:scaleType="centerCrop"
+        android:contentDescription="@null" />
+
+    <TextView
+        android:id="@+id/caller_name"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="24dp"
+        android:textColor="#FFFFFF"
+        android:textSize="24sp"
+        android:textStyle="bold" />
+
+    <TextView
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="8dp"
+        android:text="Incoming video call…"
+        android:textColor="#AAAAAA"
+        android:textSize="15sp" />
+
+    <View
+        android:layout_width="0dp"
+        android:layout_height="0dp"
+        android:layout_weight="1" />
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:gravity="center"
+        android:paddingBottom="16dp">
+
+        <Button
+            android:id="@+id/decline_button"
+            android:layout_width="140dp"
+            android:layout_height="56dp"
+            android:layout_marginEnd="24dp"
+            android:backgroundTint="#EF4444"
+            android:text="Decline"
+            android:textColor="#FFFFFF" />
+
+        <Button
+            android:id="@+id/accept_button"
+            android:layout_width="140dp"
+            android:layout_height="56dp"
+            android:backgroundTint="#10B981"
+            android:text="Accept"
+            android:textColor="#FFFFFF" />
+
+    </LinearLayout>
+
+</LinearLayout>

@@ -19,6 +19,10 @@
     <uses-permission android:name="android.permission.WAKE_LOCK"/>
     <!-- WorkManager: allow periodic tasks to restart after boot -->
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED"/>
+    <!-- Lets the incoming-call notification launch IncomingCallActivity
+         automatically (over the lock screen, no tap needed) even when the
+         app is backgrounded or killed. -->
+    <uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT"/>
     <uses-feature android:name="android.hardware.bluetooth_le" android:required="true"/>
     <application
         android:label="familyhealth"
@@ -46,6 +50,21 @@
                 <category android:name="android.intent.category.LAUNCHER"/>
             </intent-filter>
         </activity>
+        <activity
+            android:name=".IncomingCallActivity"
+            android:exported="false"
+            android:excludeFromRecents="true"
+            android:launchMode="singleTop"
+            android:taskAffinity=""
+            android:theme="@style/LaunchTheme" />
+        <receiver
+            android:name=".CallActionReceiver"
+            android:exported="false" />
+        <!-- Routes the backend's incoming-call push to CallNotificationServiceExtension
+             instead of OneSignal's default display — see that class. -->
+        <meta-data
+            android:name="com.onesignal.NotificationServiceExtension"
+            android:value="com.familywatchtoday.familyhealth.CallNotificationServiceExtension" />
         <!-- Don't delete the meta-data below.
              This is used by the Flutter tool to generate GeneratedPluginRegistrant.java -->
         <meta-data

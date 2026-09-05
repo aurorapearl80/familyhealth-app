@@ -5,12 +5,14 @@ import 'package:google_maps_flutter_platform_interface/google_maps_flutter_platf
 import 'package:provider/provider.dart';
 import 'package:workmanager/workmanager.dart';
 
+import 'navigation.dart';
 import 'screens/auth/splash_screen.dart';
 import 'services/ble_scan_service.dart';
 import 'services/ble_summary_service.dart';
 import 'services/chat_service.dart';
 import 'services/connectivity_service.dart';
 import 'services/location_service.dart';
+import 'services/native_call_bridge.dart';
 import 'services/onesignal_service.dart';
 import 'services/patient_service.dart';
 import 'theme/app_theme.dart';
@@ -30,6 +32,8 @@ void main() async {
 
   // ── OneSignal: initialize early (before runApp) ──────────────────────────
   OneSignalService.initialize();
+  OneSignalService.registerCallListeners();
+  NativeCallBridge.registerOpenVideoCallHandler();
 
   // ── WorkManager: register the background GPS callback ───────────────────
   await Workmanager().initialize(
@@ -57,6 +61,7 @@ class FamilyHealthApp extends StatelessWidget {
       child: MaterialApp(
         title: 'Family Watch Today',
         debugShowCheckedModeBanner: false,
+        navigatorKey: navigatorKey,
         theme: AppTheme.light,
         home: const SplashScreen(),
       ),

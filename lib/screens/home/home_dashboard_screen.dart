@@ -9,6 +9,7 @@ import '../../theme/app_colors.dart';
 import '../vitals/heart_rate_screen.dart';
 import '../vitals/body_composition_screen.dart';
 import '../../widgets/lottie_background.dart';
+import '../appointments/select_appointment_type_screen.dart';
 
 class HomeDashboardScreen extends StatelessWidget {
   const HomeDashboardScreen({super.key});
@@ -179,6 +180,16 @@ class HomeDashboardScreen extends StatelessWidget {
               label: 'Heart',
               onTap: () => Navigator.of(context).push(
                 MaterialPageRoute(builder: (_) => const HeartRateScreen()),
+              ),
+            ),
+            const SizedBox(width: 10),
+            _buildStatChip(
+              context,
+              icon: Icons.event_available_outlined,
+              iconColor: AppColors.primary,
+              label: 'Book Appointment',
+              onTap: () => Navigator.of(context).push(
+                MaterialPageRoute(builder: (_) => const SelectAppointmentTypeScreen()),
               ),
             ),
           ],

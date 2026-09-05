@@ -70,3 +70,10 @@ android {
 flutter {
     source = "../.."
 }
+
+dependencies {
+    // onesignal_flutter bundles this internally (implementation scope, not
+    // exposed to consumers) — declared again here so our native
+    // CallNotificationServiceExtension can compile against it directly.
+    implementation("com.onesignal:OneSignal:[5.1.0, 5.99.99]")
+}
