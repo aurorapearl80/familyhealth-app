@@ -58,12 +58,20 @@ class FamilyHealthApp extends StatelessWidget {
         ChangeNotifierProvider(create: (_) => LocationService()),
         ChangeNotifierProvider(create: (_) => ChatService()),
       ],
-      child: MaterialApp(
-        title: 'Family Watch Today',
-        debugShowCheckedModeBanner: false,
-        navigatorKey: navigatorKey,
-        theme: AppTheme.light,
-        home: const SplashScreen(),
+      child: Builder(
+        builder: (context) {
+          // Refresh account vitals summaries as soon as a BP Watch history sync
+          // concludes, so screens don't need a manual pull-to-refresh to see it.
+          context.read<BleScanService>().onSyncCompleted =
+              () => context.read<BleSummaryService>().fetch();
+          return MaterialApp(
+            title: 'Family Watch Today',
+            debugShowCheckedModeBanner: false,
+            navigatorKey: navigatorKey,
+            theme: AppTheme.light,
+            home: const SplashScreen(),
+          );
+        },
       ),
     );
   }

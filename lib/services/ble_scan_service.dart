@@ -10,6 +10,7 @@ import '../models/device_readings.dart';
 import 'ble_constants.dart';
 import 'ble_parsers.dart';
 import 'body_composition_calc.dart';
+import 'bp_watch_service.dart';
 import 'stable_value_detector.dart';
 
 void _log(String msg) => debugPrint('[BLE] $msg');
@@ -33,6 +34,12 @@ class BleScanService extends ChangeNotifier {
   Timer? _scanWindowTimer;
   Timer? _connectTimeoutTimer;
   BluetoothDevice? _connectedDevice;
+  BpWatchService? _bpWatchService;
+
+  /// Set by app startup wiring (see main.dart) to refresh account-level vitals
+  /// summaries (BleSummaryService) as soon as a BP Watch history sync concludes,
+  /// instead of requiring a manual pull-to-refresh on each vitals screen.
+  VoidCallback? onSyncCompleted;
 
   final IntPairStableDetector _oximeterDetector = IntPairStableDetector(
     stableDelayMs: BleConstants.stableDelayMs,
@@ -279,6 +286,12 @@ class BleScanService extends ChangeNotifier {
     try {
       final services = await device.discoverServices();
       _log('"$name" has ${services.length} services');
+
+      if (BpWatchService.isBpWatchName(name)) {
+        _bpWatchService = BpWatchService(name, onSyncCompleted: onSyncCompleted);
+        await _bpWatchService!.onServicesDiscovered(device, services);
+      }
+
       for (final service in services) {
         _log('  Service: ${service.uuid}');
         for (final characteristic in service.characteristics) {
@@ -319,6 +332,11 @@ class BleScanService extends ChangeNotifier {
 
   void _handleCharacteristicData(String deviceName, List<int> data) {
     if (data.isEmpty) return;
+
+    if (BpWatchService.isBpWatchName(deviceName)) {
+      _bpWatchService?.handleData(data);
+      return;
+    }
 
     if (deviceName.contains('EMPECS')) {
       _log('GLUCOSE raw len=${data.length}: ${_hex(data)}');
@@ -564,6 +582,8 @@ class BleScanService extends ChangeNotifier {
     _upsertDevice(name, address, connected: false);
     final type = BleDeviceInfo.typeFromName(name);
     _markRegisteredSeen(type, connected: false);
+    _bpWatchService?.onDisconnected();
+    _bpWatchService = null;
     _resetConnectionState();
     _startScanCycle();
   }
@@ -615,7 +635,8 @@ class BleScanService extends ChangeNotifier {
     return lower.contains('empecs') ||
         lower.contains('thermometer') ||
         lower.contains('jpd') ||
-        lower.contains('my oximeter');
+        lower.contains('my oximeter') ||
+        lower.contains('u19m');
   }
 
   List<int>? _extractAdvertisementBytes(ScanResult result) {
@@ -645,6 +666,8 @@ class BleScanService extends ChangeNotifier {
     await _connectionSub?.cancel();
     _oximeterDetector.dispose();
     _weightDetector.dispose();
+    _bpWatchService?.onDisconnected();
+    _bpWatchService = null;
     await _stopScan();
     if (_connectedDevice != null) {
       try {

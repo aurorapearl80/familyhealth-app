@@ -48,6 +48,9 @@ class BleDeviceInfo {
     final lower = name.toLowerCase();
     if (lower.contains('jpd scale')) return BleDeviceType.weight;
     if (lower.contains('jpd')) return BleDeviceType.bloodPressure;
+    // Urion "Blood Pressure Watch" (advertised name e.g. "U19M_ZX_1653") — reuses the
+    // existing bloodPressure device_id/catalog entry rather than a new one (see bp_watch_service.dart).
+    if (lower.contains('u19m')) return BleDeviceType.bloodPressure;
     if (lower.contains('thermometer')) return BleDeviceType.temperature;
     if (lower.contains('oximeter')) return BleDeviceType.bloodOxygen;
     if (lower.contains('empecs')) return BleDeviceType.bloodGlucose;
